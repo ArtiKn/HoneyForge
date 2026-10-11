@@ -1,0 +1,101 @@
+erDiagram
+    PROFILES ||--o{ HONEYPOTS : "профиль задаёт конфиг"
+    HONEYPOTS ||--o{ EVENTS : "порождает"
+    HONEYPOTS ||--o{ SESSIONS : "ведёт"
+    SESSIONS ||--o{ EVENTS : "содержит"
+    HONEYPOTS ||--o{ HONEYTOKENS : "содержит"
+    OPERATORS ||--o{ AUDIT : "совершает действия"
+
+    PROFILES {
+        uuid id PK
+        text name "уникальное имя профиля"
+        text type "low | medium | high"
+        jsonb services "список эмулируемых сервисов"
+        jsonb banners "баннеры по сервисам"
+        jsonb config "доп. параметры (тайминги, cap_drop…)"
+        bool is_active
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    HONEYPOTS {
+        uuid id PK
+        text name
+        uuid profile_id FK
+        inet ip_address
+        text hostname
+        text status "online | offline | degraded"
+        text agent_version
+        text region "опц. для geo"
+        timestamptz last_seen_at
+        jsonb agent_meta "OS, uptime, arch"
+        timestamptz created_at
+    }
+
+    EVENTS {
+        bigserial id PK
+        uuid honeypot_id FK
+        uuid session_id FK "nullable"
+        timestamptz ts
+        text type "probe|auth_fail|auth_success|command|download|honeytoken"
+        inet src_ip
+        int src_port
+        int dst_port
+        text proto "tcp|udp"
+        text service "ssh|http|mysql|…"
+        text username "nullable"
+        text password "nullable"
+        text command "nullable"
+        jsonb payload "raw-данные"
+        text severity "info|low|medium|high"
+        text geo_country "ISO-2"
+        text geo_city
+        float geo_lat
+        float geo_lon
+    }
+
+    SESSIONS {
+        uuid id PK
+        uuid honeypot_id FK
+        inet src_ip
+        timestamptz started_at
+        timestamptz ended_at "nullable"
+        text protocol "ssh|http|…"
+        jsonb credentials "все попытки логина"
+        int commands_count
+        text outcome "success|fail|unknown"
+        jsonb meta "user_agent, fingerprint, …"
+    }
+
+    HONEYTOKENS {
+        uuid id PK
+        uuid honeypot_id FK
+        text type "aws_key|ssh_key|env_file|url"
+        text path "где размещён"
+        text token_hash "sha256 содержимого"
+        text status "armed|triggered|disabled"
+        timestamptz armed_at
+        timestamptz triggered_at "nullable"
+        inet triggered_by "nullable"
+    }
+
+    OPERATORS {
+        uuid id PK
+        text username UK
+        text password_hash "bcrypt"
+        text role "admin|analyst|viewer"
+        bool is_active
+        timestamptz last_login_at
+        timestamptz created_at
+    }
+
+    AUDIT {
+        bigserial id PK
+        uuid operator_id FK
+        text action "login|create_profile|export_ioc|…"
+        text entity "profile|honeypot|event|…"
+        uuid entity_id "nullable"
+        jsonb details
+        inet ip
+        timestamptz ts
+    }

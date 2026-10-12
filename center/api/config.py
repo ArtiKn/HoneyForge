@@ -1,3 +1,5 @@
+"""Control API settings (task 2.1)."""
+
 from functools import lru_cache
 
 from pydantic import Field
@@ -13,6 +15,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    telemetry_path: str = "/assets/v2/init"
+    
     app_name: str = "HoneyForge API"
     debug: bool = False
     database_url: str = Field(

@@ -1,0 +1,15 @@
+# Build context: center/web (task 6.3).
+__pycache__/
+.pytest_cache/
+node_modules/
+dist/
+build/
+.env
+.env.*
+*.md
+docs/
+tests/
+.github/
+deploy/
+*.log
+.DS_Store

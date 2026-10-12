@@ -1,3 +1,8 @@
+"""Telemetry collector stub (task 6.1).
+
+Placeholder process for the center stack; ingest and normalization are
+implemented by the backend role.
+"""
 from collections.abc import Sequence
 from typing import Any
 
@@ -11,4 +16,3 @@ def ingest(batch: Sequence[EventSchema | dict[str, Any]]) -> int:
     for event in batch:
         normalize(event)
     return len(batch)
-

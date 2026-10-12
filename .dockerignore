@@ -1,0 +1,48 @@
+# Root .dockerignore (task 6.3).
+# Build contexts are per-service; this file applies if the repo root is used.
+
+# Git and CI
+.git
+.github
+.gitignore
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+deploy/nginx/certs/
+deploy/secrets/
+
+# Docs and tests
+docs/
+tests/
+*.md
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+dist/
+build/
+
+# Runtime data
+*.log
+*.db
+*.sqlite3
+data/
+pgdata/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store

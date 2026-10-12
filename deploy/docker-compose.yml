@@ -1,0 +1,183 @@
+# Center stack: postgres, api, collector, web, nginx (task 6.1).
+# mgmt_net is internal (task 4.3); edge_net only publishes Nginx ports.
+name: honeyforge-center
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-hardening: &hardening
+  restart: unless-stopped
+  logging: *default-logging
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  postgres:
+    <<: *hardening
+    image: postgres:16
+    container_name: hf-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-honeyforge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-honeyforge}
+      POSTGRES_DB: ${POSTGRES_DB:-honeyforge}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    networks:
+      - mgmt_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  api:
+    <<: *hardening
+    build:
+      context: ../center/api
+    image: honeyforge/api:dev
+    container_name: hf-api
+    env_file:
+      - ../.env
+    environment:
+      TELEMETRY_PATH: ${TELEMETRY_PATH:-/assets/v2/init}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mgmt_net
+    expose:
+      - "8000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health').status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+
+  collector:
+    <<: *hardening
+    build:
+      context: ../center/collector
+    image: honeyforge/collector:dev
+    container_name: hf-collector
+    env_file:
+      - ../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mgmt_net
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+
+  web:
+    <<: *hardening
+    build:
+      context: ../center/web
+    image: honeyforge/web:dev
+    container_name: hf-web
+    networks:
+      - mgmt_net
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    entrypoint: ["nginx", "-g", "daemon off;"]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+
+  nginx:
+    <<: *hardening
+    image: nginx:1.27-alpine
+    container_name: hf-nginx
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_started
+    ports:
+      - "${CENTER_HTTP_PORT:-80}:80"
+      - "${CENTER_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    networks:
+      - mgmt_net
+      - edge_net
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    entrypoint: ["nginx", "-g", "daemon off;"]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+
+networks:
+  mgmt_net:
+    name: honeyforge_mgmt_net
+    internal: true
+  edge_net:
+    name: honeyforge_edge_net
+    driver: bridge
+
+volumes:
+  pgdata:
+    name: honeyforge_pgdata

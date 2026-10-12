@@ -1,0 +1,76 @@
+# Honeypot fleet skeleton: agent-low, agent-medium (task 6.2).
+# Separate host and dmz_net, isolated from the center (task 4.3).
+name: honeyforge-honeypots
+
+x-agent-common: &agent-common
+  restart: unless-stopped
+  env_file:
+    - ../.env
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+  security_opt:
+    - no-new-privileges:true
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  networks:
+    - dmz_net
+
+services:
+  agent-low:
+    <<: *agent-common
+    build:
+      context: ../agent/low
+    image: honeyforge/agent-low:dev
+    container_name: hf-agent-low
+    environment:
+      CENTER_URL: ${AGENT_CENTER_URL:-https://assets.cdn-static.example}
+      AGENT_TOKEN: ${AGENT_TOKEN:-change-me}
+      HONEYPOT_ID: ${HONEYPOT_ID_LOW:-low-01}
+      HONEYPOT_LEVEL: low
+      TELEMETRY_PATH: ${TELEMETRY_PATH:-/assets/v2/init}
+      BEACON_INTERVAL_SECONDS: ${BEACON_INTERVAL_SECONDS:-60}
+      BEACON_JITTER_SECONDS: ${BEACON_JITTER_SECONDS:-30}
+      PROCESS_NAME: ${PROCESS_NAME:-syslog-relay}
+      VERIFY_TLS: ${VERIFY_TLS:-0}
+    extra_hosts:
+      - "assets.cdn-static.example:host-gateway"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+
+  agent-medium:
+    <<: *agent-common
+    build:
+      context: ../agent/medium
+    image: honeyforge/agent-medium:dev
+    container_name: hf-agent-medium
+    environment:
+      CENTER_URL: ${AGENT_CENTER_URL:-https://assets.cdn-static.example}
+      AGENT_TOKEN: ${AGENT_TOKEN:-change-me}
+      HONEYPOT_ID: ${HONEYPOT_ID_MEDIUM:-medium-01}
+      HONEYPOT_LEVEL: medium
+      TELEMETRY_PATH: ${TELEMETRY_PATH:-/assets/v2/init}
+      BEACON_INTERVAL_SECONDS: ${BEACON_INTERVAL_SECONDS:-60}
+      BEACON_JITTER_SECONDS: ${BEACON_JITTER_SECONDS:-30}
+      PROCESS_NAME: ${PROCESS_NAME:-syslog-relay}
+      VERIFY_TLS: ${VERIFY_TLS:-0}
+    extra_hosts:
+      - "assets.cdn-static.example:host-gateway"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 192M
+
+networks:
+  dmz_net:
+    name: honeyforge_dmz_net
+    driver: bridge

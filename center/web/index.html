@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HoneyForge</title>
+  <style>
+    body { margin: 2rem; font-family: system-ui, sans-serif; background: #0f1720; color: #e6edf3; }
+    code { background: #16202b; padding: .1rem .35rem; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>HoneyForge</h1>
+  <p>Web UI placeholder (task 6.1). Dashboard and profile builder come with the frontend role (role 4).</p>
+  <p id="status">API: checking…</p>
+  <script>
+    fetch('/api/health')
+      .then(r => r.json())
+      .then(d => { document.getElementById('status').textContent = 'API: ' + d.status; })
+      .catch(() => { document.getElementById('status').textContent = 'API: unavailable'; });
+  </script>
+</body>
+</html>

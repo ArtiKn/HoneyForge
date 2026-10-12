@@ -33,3 +33,20 @@
 - [ ] TLS + скрытый endpoint + маскировка процесса (MASK-1,2,4)
 - [ ] Dashboard: список ловушек + лента событий (WebSocket)
 - [ ] Живая демонстрация «атака → событие в центре»
+
+## Backend: локальный запуск
+
+Требуется Python 3.11+ и PostgreSQL. Настройки читаются из переменных окружения;
+основная — `DATABASE_URL` в формате
+`postgresql+asyncpg://user:password@host:5432/database`.
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/alembic upgrade head
+.venv/bin/uvicorn center.api.main:app --reload
+```
+
+Документация API будет доступна по адресу `http://localhost:8000/docs`,
+healthcheck — `GET /api/health`, endpoint телеметрии —
+`POST /assets/v2/init`.

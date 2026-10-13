@@ -50,7 +50,8 @@ services:
   api:
     <<: *hardening
     build:
-      context: ../center/api
+      context: ..
+      dockerfile: center/api/Dockerfile
     image: honeyforge/api:dev
     container_name: hf-api
     env_file:
@@ -74,7 +75,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 10s
+      start_period: 30s
     deploy:
       resources:
         limits:
@@ -84,7 +85,8 @@ services:
   collector:
     <<: *hardening
     build:
-      context: ../center/collector
+      context: ..
+      dockerfile: center/collector/Dockerfile
     image: honeyforge/collector:dev
     container_name: hf-collector
     env_file:

@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     )
 
     telemetry_path: str = "/assets/v2/init"
-    
+
     app_name: str = "HoneyForge API"
     debug: bool = False
     database_url: str = Field(

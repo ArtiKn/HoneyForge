@@ -1,5 +1,5 @@
 # Root .dockerignore (task 6.3).
-# Build contexts are per-service; this file applies if the repo root is used.
+# Applied to the api and collector images, which build from the repo root.
 
 # Git and CI
 .git
@@ -10,8 +10,8 @@
 .env
 .env.*
 !.env.example
-deploy/nginx/certs/
-deploy/secrets/
+deploy/
+agent/
 
 # Docs and tests
 docs/

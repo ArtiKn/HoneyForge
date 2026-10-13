@@ -1,12 +1,13 @@
-"""Control API stub (task 2.1).
+"""Control API application (task 2.1).
 
-Provides the health check required by the center stack (task 6.1) and the
-Nginx proxy check (task 6.4), plus the masked telemetry endpoint (task 4.2).
+Wires the routers, CORS, the health check used by the center stack (task 6.1)
+and the Nginx proxy check (task 6.4), and the realtime WebSocket.
+The masked telemetry endpoint (task 4.2) lives in ``routers/telemetry.py``.
 """
 
 from __future__ import annotations
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from center.api.config import get_settings
@@ -44,16 +45,3 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
-
-
-@app.post(settings.telemetry_path, include_in_schema=False)
-async def telemetry(request: Request) -> dict[str, int]:
-    """Accept masked telemetry behind a CDN-like path (task 4.2)."""
-    try:
-        payload = await request.json()
-    except Exception:  # noqa: BLE001
-        payload = {}
-
-    events = payload.get("events", []) if isinstance(payload, dict) else []
-    return {"accepted": len(events)}
-  

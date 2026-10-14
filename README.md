@@ -48,5 +48,5 @@ python3 -m venv .venv
 ```
 
 Документация API будет доступна по адресу `http://localhost:8000/docs`,
-healthcheck — `GET /api/health`, endpoint телеметрии —
+healthcheck — `GET /health`, readiness — `GET /ready`, endpoint телеметрии —
 `POST /assets/v2/init`.

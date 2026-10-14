@@ -11,13 +11,23 @@
 </head>
 <body>
   <h1>HoneyForge</h1>
-  <p>Web UI placeholder (task 6.1). Dashboard and profile builder come with the frontend role (role 4).</p>
-  <p id="status">API: checking…</p>
+  <p>Authenticated Control Center dashboard.</p>
+  <p id="operator">Operator: checking…</p>
+  <button id="logout" type="button">Log out</button>
   <script>
-    fetch('/api/health')
-      .then(r => r.json())
-      .then(d => { document.getElementById('status').textContent = 'API: ' + d.status; })
-      .catch(() => { document.getElementById('status').textContent = 'API: unavailable'; });
+    fetch('/api/v1/dashboard', { credentials: 'same-origin' })
+      .then(r => {
+        if (r.status === 401) window.location.replace('/login.html');
+        if (!r.ok) throw new Error('dashboard unavailable');
+        return r.json();
+      })
+      .then(d => { document.getElementById('operator').textContent = 'Operator: ' + d.operator; })
+      .catch(() => { document.getElementById('operator').textContent = 'Dashboard unavailable'; });
+
+    document.getElementById('logout').addEventListener('click', () => {
+      fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'same-origin' })
+        .then(() => window.location.replace('/login.html'));
+    });
   </script>
 </body>
 </html>

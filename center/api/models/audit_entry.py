@@ -13,8 +13,8 @@ class AuditEntry(Base):
     __tablename__ = "audit_entries"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    operator_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("operators.id", ondelete="RESTRICT"), nullable=False
+    operator_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("operators.id", ondelete="RESTRICT")
     )
     action: Mapped[str] = mapped_column(String(64), nullable=False)
     entity: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -25,5 +25,5 @@ class AuditEntry(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    operator: Mapped["Operator"] = relationship(back_populates="audit_entries")  # noqa: F821
+    operator: Mapped["Operator | None"] = relationship(back_populates="audit_entries")  # noqa: F821
 

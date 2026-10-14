@@ -23,12 +23,16 @@ async def test_health_and_router_stubs(client: httpx.AsyncClient) -> None:
     assert (await client.get("/api/health")).json() == {"status": "ok"}
     for path in (
         "/api/v1/auth/ping",
-        "/api/v1/trap-profiles/ping",
-        "/api/v1/traps/ping",
-        "/api/v1/security-events/ping",
         "/api/telemetry/ping",
     ):
         assert (await client.get(path)).status_code == 200
+    for protected_path in (
+        "/api/v1/trap-profiles/ping",
+        "/api/v1/traps/ping",
+        "/api/v1/security-events/ping",
+        "/api/v1/dashboard",
+    ):
+        assert (await client.get(protected_path)).status_code == 401
 
 
 @pytest.mark.anyio

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HoneyForge — Operator login</title>
+  <style>
+    body { margin: 2rem; font-family: system-ui, sans-serif; background: #0f1720; color: #e6edf3; }
+    form { display: grid; gap: .75rem; max-width: 22rem; }
+    input, button { box-sizing: border-box; padding: .65rem; font: inherit; }
+    #error { min-height: 1.5rem; color: #ff8b8b; }
+  </style>
+</head>
+<body>
+  <h1>HoneyForge</h1>
+  <form id="login-form">
+    <label>Operator <input name="username" autocomplete="username" required /></label>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
+    <button type="submit">Log in</button>
+    <p id="error" role="alert"></p>
+  </form>
+  <script>
+    document.getElementById('login-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const values = new FormData(event.currentTarget);
+      const response = await fetch('/api/v1/auth/login', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: values.get('username'), password: values.get('password') })
+      });
+      if (response.ok) window.location.replace('/');
+      else document.getElementById('error').textContent = 'Invalid credentials';
+    });
+  </script>
+</body>
+</html>

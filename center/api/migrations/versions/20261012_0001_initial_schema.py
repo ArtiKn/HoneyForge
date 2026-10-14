@@ -39,6 +39,7 @@ def upgrade() -> None:
         sa.Column("password_hash", sa.String, nullable=False),
         sa.Column("role", sa.String(16), nullable=False),
         sa.Column("is_active", sa.Boolean, nullable=False),
+        sa.Column("session_version", sa.Integer, nullable=False),
         sa.Column("last_login_at", sa.DateTime(timezone=True)),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
     )
@@ -94,7 +95,7 @@ def upgrade() -> None:
     op.create_table(
         "audit_entries",
         sa.Column("id", sa.BigInteger, primary_key=True, autoincrement=True),
-        sa.Column("operator_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("operators.id", ondelete="RESTRICT"), nullable=False),
+        sa.Column("operator_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("operators.id", ondelete="RESTRICT")),
         sa.Column("action", sa.String(64), nullable=False),
         sa.Column("entity", sa.String(64), nullable=False),
         sa.Column("entity_id", postgresql.UUID(as_uuid=True)),

@@ -1,19 +1,21 @@
-from center.api.models import Base, Event, Honeypot, Profile
+from uuid import uuid4
+
+from center.api.models import AttackSession, Base, SecurityEvent, Trap, TrapProfile
 from center.api.schemas.telemetry import TelemetryBatch
 from center.collector.ingest import ingest
+from center.collector.normalizer import normalize
 
 
 def test_all_documented_tables_are_registered() -> None:
     assert set(Base.metadata.tables) == {
-        "profiles",
-        "honeypots",
-        "events",
-        "sessions",
-        "honeytokens",
+        "trap_profiles",
+        "traps",
+        "security_events",
+        "attack_sessions",
         "operators",
-        "audit",
+        "audit_entries",
     }
-    assert Event and Honeypot and Profile
+    assert SecurityEvent and Trap and TrapProfile and AttackSession
 
 
 def test_empty_batch_contract() -> None:
@@ -22,24 +24,27 @@ def test_empty_batch_contract() -> None:
     assert ingest(batch.events) == 0
 
 
-def test_agent_event_contract_accepts_documented_identifiers_and_unix_time() -> None:
+def test_security_event_contract_uses_canonical_identifiers_and_fields() -> None:
     batch = TelemetryBatch.model_validate(
         {
             "events": [
                 {
-                    "ts": 1,
-                    "honeypot_id": "h1",
-                    "src_ip": "1.2.3.4",
-                    "src_port": 1234,
-                    "dst_port": 22,
-                    "proto": "tcp",
-                    "action": "connect",
-                    "creds": None,
-                    "cmd": None,
-                    "raw": "",
+                    "id": str(uuid4()),
+                    "schema_version": 1,
+                    "trap_id": str(uuid4()),
+                    "attack_session_id": str(uuid4()),
+                    "event_type": "connection_opened",
+                    "observed_at": "2026-10-12T12:00:00Z",
+                    "source_ip": "1.2.3.4",
+                    "source_port": 1234,
+                    "target_service": "ssh",
+                    "target_port": 22,
+                    "payload": {},
                 }
             ]
         }
     )
-    assert batch.events[0].honeypot_id == "h1"
+    assert batch.events[0].event_type == "connection_opened"
+    normalized = normalize(batch.events[0])
+    assert "received_at" in normalized
 

@@ -1,16 +1,16 @@
 from center.api.schemas.auth import LoginRequest, TokenResponse
-from center.api.schemas.event import EventSchema
-from center.api.schemas.honeypot import HoneypotCreate, HoneypotRead
-from center.api.schemas.profile import ProfileCreate, ProfileRead
+from center.api.schemas.security_event import SecurityEventSchema
+from center.api.schemas.trap import TrapCreate, TrapRead
+from center.api.schemas.trap_profile import TrapProfileCreate, TrapProfileRead
 from center.api.schemas.telemetry import TelemetryBatch
 
 __all__ = [
-    "EventSchema",
-    "HoneypotCreate",
-    "HoneypotRead",
+    "SecurityEventSchema",
+    "TrapCreate",
+    "TrapRead",
     "LoginRequest",
-    "ProfileCreate",
-    "ProfileRead",
+    "TrapProfileCreate",
+    "TrapProfileRead",
     "TelemetryBatch",
     "TokenResponse",
 ]

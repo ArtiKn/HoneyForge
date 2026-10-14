@@ -6,11 +6,11 @@ implemented by the backend role.
 from collections.abc import Sequence
 from typing import Any
 
-from center.api.schemas.event import EventSchema
+from center.api.schemas.security_event import SecurityEventSchema
 from center.collector.normalizer import normalize
 
 
-def ingest(batch: Sequence[EventSchema | dict[str, Any]]) -> int:
+def ingest(batch: Sequence[SecurityEventSchema | dict[str, Any]]) -> int:
     """Validate and normalize a batch; persistence is the next collector stage."""
 
     for event in batch:

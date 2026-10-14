@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from center.api.config import get_settings
 from center.api.realtime.ws_manager import manager
-from center.api.routers import auth, events, honeypots, profiles, telemetry
+from center.api.routers import auth, security_events, telemetry, trap_profiles, traps
 
 
 settings = get_settings()
@@ -25,10 +25,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
-app.include_router(profiles.router, prefix="/api/profiles", tags=["profiles"])
-app.include_router(honeypots.router, prefix="/api/honeypots", tags=["honeypots"])
-app.include_router(events.router, prefix="/api/events", tags=["events"])
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
+app.include_router(trap_profiles.router, prefix="/api/v1/trap-profiles", tags=["trap-profiles"])
+app.include_router(traps.router, prefix="/api/v1/traps", tags=["traps"])
+app.include_router(
+    security_events.router,
+    prefix="/api/v1/security-events",
+    tags=["security-events"],
+)
 app.include_router(telemetry.router)
 
 

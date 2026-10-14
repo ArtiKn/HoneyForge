@@ -9,8 +9,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from center.api.models.base import Base
 
 
-class Audit(Base):
-    __tablename__ = "audit"
+class AuditEntry(Base):
+    __tablename__ = "audit_entries"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     operator_id: Mapped[uuid.UUID] = mapped_column(
@@ -20,8 +20,8 @@ class Audit(Base):
     entity: Mapped[str] = mapped_column(String(64), nullable=False)
     entity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
-    ip: Mapped[str | None] = mapped_column(INET)
-    ts: Mapped[datetime] = mapped_column(
+    source_ip: Mapped[str | None] = mapped_column(INET)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 

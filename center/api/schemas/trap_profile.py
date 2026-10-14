@@ -5,19 +5,20 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class ProfileCreate(BaseModel):
+class TrapProfileCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
-    type: Literal["low", "medium", "high"]
+    interaction_level: Literal["low", "medium"]
     services: list[dict[str, Any]] = Field(default_factory=list)
     banners: dict[str, str] = Field(default_factory=dict)
     config: dict[str, Any] = Field(default_factory=dict)
-    is_active: bool = True
 
 
-class ProfileRead(ProfileCreate):
+class TrapProfileRead(TrapProfileCreate):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    version: int
+    is_archived: bool
     created_at: datetime
     updated_at: datetime
 

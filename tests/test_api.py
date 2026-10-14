@@ -22,10 +22,10 @@ async def client():
 async def test_health_and_router_stubs(client: httpx.AsyncClient) -> None:
     assert (await client.get("/api/health")).json() == {"status": "ok"}
     for path in (
-        "/api/auth/ping",
-        "/api/profiles/ping",
-        "/api/honeypots/ping",
-        "/api/events/ping",
+        "/api/v1/auth/ping",
+        "/api/v1/trap-profiles/ping",
+        "/api/v1/traps/ping",
+        "/api/v1/security-events/ping",
         "/api/telemetry/ping",
     ):
         assert (await client.get(path)).status_code == 200
@@ -38,16 +38,17 @@ async def test_masked_telemetry_endpoint_accepts_javascript_content_type(
     payload = {
         "events": [
             {
-                "ts": "2026-10-12T12:00:00Z",
-                "honeypot_id": str(uuid4()),
-                "src_ip": "192.0.2.10",
-                "src_port": 4242,
-                "dst_port": 22,
-                "proto": "tcp",
-                "action": "connect",
-                "creds": None,
-                "cmd": None,
-                "raw": "",
+                "id": str(uuid4()),
+                "schema_version": 1,
+                "trap_id": str(uuid4()),
+                "attack_session_id": str(uuid4()),
+                "event_type": "connection_opened",
+                "observed_at": "2026-10-12T12:00:00Z",
+                "source_ip": "192.0.2.10",
+                "source_port": 4242,
+                "target_service": "ssh",
+                "target_port": 22,
+                "payload": {},
             }
         ]
     }

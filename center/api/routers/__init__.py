@@ -1,4 +1,4 @@
-from center.api.routers import auth, events, honeypots, profiles, telemetry
+from center.api.routers import auth, security_events, telemetry, trap_profiles, traps
 
-__all__ = ["auth", "events", "honeypots", "profiles", "telemetry"]
+__all__ = ["auth", "security_events", "telemetry", "trap_profiles", "traps"]
 

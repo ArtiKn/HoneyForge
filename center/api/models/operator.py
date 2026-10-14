@@ -18,5 +18,5 @@ class Operator(CreatedAtMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    audit_entries: Mapped[list["Audit"]] = relationship(back_populates="operator")  # noqa: F821
+    audit_entries: Mapped[list["AuditEntry"]] = relationship(back_populates="operator")  # noqa: F821
 

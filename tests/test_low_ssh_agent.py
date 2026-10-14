@@ -11,7 +11,14 @@ from uuid import uuid4
 
 import pytest
 
-from agent.low.honeyforge_low import AgentClient, EventQueue, JsonLogFormatter, LowSshAgent
+from agent.low.honeyforge_low import (
+    AgentClient,
+    EventQueue,
+    JsonLogFormatter,
+    LowHttpAgent,
+    LowMySqlAgent,
+    LowSshAgent,
+)
 from tests.support import create_test_certificate
 
 
@@ -58,6 +65,137 @@ async def test_tcp_connection_is_queued_as_one_ssh_attack_session(
     assert events[0]["source_ip"] == "127.0.0.1"
     assert events[0]["target_service"] == "ssh"
     assert events[0]["target_port"] == bound_port
+
+
+async def test_http_service_returns_static_response_and_normalizes_request(
+    tmp_path: Path,
+) -> None:
+    queue = EventQueue(tmp_path / "http.sqlite3")
+    agent = LowHttpAgent(
+        trap_id=uuid4(), host="127.0.0.1", port=0, queue=queue, max_input_bytes=1024
+    )
+    await agent.start()
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", agent.port)
+        writer.write(b"GET /admin?probe=1 HTTP/1.1\r\n")
+        await writer.drain()
+        await asyncio.sleep(0.05)
+        writer.write(b"Host: trap\r\n\r\n")
+        await writer.drain()
+        response = await reader.read()
+        writer.close()
+        await writer.wait_closed()
+        await _wait_for_events(queue, count=3)
+    finally:
+        await agent.stop()
+
+    assert response.startswith(b"HTTP/1.1 200 OK\r\n")
+    assert b"HoneyForge" in response
+    events = queue.pending(limit=10)
+    assert [event["event_type"] for event in events] == [
+        "connection_opened",
+        "http_request",
+        "connection_closed",
+    ]
+    assert events[1]["payload"] == {
+        "method": "GET",
+        "path": "/admin?probe=1",
+        "http_version": "HTTP/1.1",
+        "bytes_received": 43,
+    }
+    assert events[0]["target_service"] == "http"
+    assert {event["attack_session_id"] for event in events} == {
+        events[0]["attack_session_id"]
+    }
+
+
+async def test_mysql_service_returns_handshake_and_enforces_input_limit(
+    tmp_path: Path,
+) -> None:
+    queue = EventQueue(tmp_path / "mysql.sqlite3")
+    agent = LowMySqlAgent(
+        trap_id=uuid4(), host="127.0.0.1", port=0, queue=queue, max_input_bytes=8
+    )
+    await agent.start()
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", agent.port)
+        handshake = await reader.readexactly(4)
+        packet_length = int.from_bytes(handshake[:3], "little")
+        payload = await reader.readexactly(packet_length)
+        writer.write(b"x" * 9)
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+        await _wait_for_events(queue, count=2)
+    finally:
+        await agent.stop()
+
+    assert payload[0] == 10
+    assert b"8.0.36-HoneyForge" in payload
+    assert b"mysql_native_password\x00" in payload
+    events = queue.pending(limit=10)
+    assert [event["event_type"] for event in events] == [
+        "connection_opened",
+        "connection_closed",
+    ]
+    assert events[0]["target_service"] == "mysql"
+
+
+async def test_http_service_rejects_connections_above_configured_limit(
+    tmp_path: Path,
+) -> None:
+    queue = EventQueue(tmp_path / "http-limit.sqlite3")
+    agent = LowHttpAgent(
+        trap_id=uuid4(),
+        host="127.0.0.1",
+        port=0,
+        queue=queue,
+        connection_limit=1,
+        idle_timeout_seconds=5,
+    )
+    await agent.start()
+    try:
+        first_reader, first_writer = await asyncio.open_connection(
+            "127.0.0.1", agent.port
+        )
+        second_reader, second_writer = await asyncio.open_connection(
+            "127.0.0.1", agent.port
+        )
+        assert await second_reader.read() == b""
+        second_writer.close()
+        await second_writer.wait_closed()
+        first_writer.close()
+        await first_writer.wait_closed()
+        await _wait_for_events(queue, count=2)
+    finally:
+        await agent.stop()
+
+    assert queue.pending_count() == 2
+    assert first_reader is not None
+
+
+async def test_http_source_reuses_attack_session_for_fifteen_minutes(
+    tmp_path: Path,
+) -> None:
+    queue = EventQueue(tmp_path / "http-session.sqlite3")
+    agent = LowHttpAgent(trap_id=uuid4(), host="127.0.0.1", port=0, queue=queue)
+    await agent.start()
+    try:
+        for _ in range(2):
+            reader, writer = await asyncio.open_connection("127.0.0.1", agent.port)
+            writer.write(b"GET / HTTP/1.1\r\nHost: trap\r\n\r\n")
+            await writer.drain()
+            await reader.read()
+            writer.close()
+            await writer.wait_closed()
+        await _wait_for_events(queue, count=6)
+    finally:
+        await agent.stop()
+
+    events = queue.pending(limit=10)
+    opened = [event for event in events if event["event_type"] == "connection_opened"]
+    assert len(opened) == 2
+    assert opened[0]["attack_session_id"] == opened[1]["attack_session_id"]
 
 
 async def _wait_for_events(queue: EventQueue, *, count: int) -> None:

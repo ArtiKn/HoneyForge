@@ -22,6 +22,16 @@ class ConnectionClosedPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     bytes_sent: int = Field(ge=0)
+    session_expired: bool = False
+
+
+class HttpRequestPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    method: str = Field(min_length=1, max_length=16)
+    path: str = Field(min_length=1, max_length=2048)
+    http_version: Literal["HTTP/1.0", "HTTP/1.1"]
+    bytes_received: int = Field(ge=0)
 
 
 class SecurityEventSchema(BaseModel):
@@ -58,6 +68,7 @@ class SecurityEventSchema(BaseModel):
     def validate_typed_payload(self) -> "SecurityEventSchema":
         payload_types = {
             "connection_opened": ConnectionOpenedPayload,
+            "http_request": HttpRequestPayload,
             "connection_closed": ConnectionClosedPayload,
         }
         payload_type = payload_types.get(self.event_type)

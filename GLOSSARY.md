@@ -55,3 +55,11 @@ _Avoid_: Quarantined Security Event, failed event, dead-letter event
 **Buffer Loss Report**:
 Operational telemetry that counts Security Event records evicted by an Agent's bounded buffer, including their byte volume and loss interval. It remains pending until the Control Center acknowledges it and is not a Security Event.
 _Avoid_: Data-loss event, dropped-event log, Security Event
+
+**Low HTTP Service**:
+A low-interaction Trap service that returns one static HTTP response and records the request line as a Security Event without executing application behavior.
+_Avoid_: HTTP application, web server
+
+**Low MySQL Service**:
+A low-interaction Trap service that sends a static MySQL-compatible handshake and records the connection without executing database behavior.
+_Avoid_: MySQL database, SQL server

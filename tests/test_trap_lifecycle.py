@@ -18,7 +18,13 @@ import pytest
 import uvicorn
 from sqlalchemy import func, select
 
-from agent.low.honeyforge_low import AgentClient, EventQueue, LowSshAgent
+from agent.low.honeyforge_low import (
+    AgentClient,
+    EventQueue,
+    LowHttpAgent,
+    LowMySqlAgent,
+    LowSshAgent,
+)
 from center.api.config import Settings
 from center.api.main import create_app
 from center.api.models import AttackSession, AuditEntry, SecurityEvent, Trap
@@ -775,6 +781,139 @@ async def test_black_box_low_ssh_interaction_reaches_operator_api(
         )
     assert event_count == 102
     _assert_events_visible_in_browser(response.json()["items"])
+
+
+async def test_black_box_low_http_and_mysql_reach_operator_api(
+    lifecycle_app, lifecycle_client, tmp_path: Path
+) -> None:
+    http_port = _free_port()
+    mysql_port = _free_port()
+    profile = await lifecycle_client.post(
+        "/api/v1/trap-profiles",
+        headers={"Origin": "https://test"},
+        json={
+            "name": "Black-box Low HTTP and MySQL",
+            "interaction_level": "low",
+            "services": [
+                {"protocol": "http", "internal_port": http_port},
+                {"protocol": "mysql", "internal_port": mysql_port},
+            ],
+        },
+    )
+    assert profile.status_code == 201
+    created_response = await lifecycle_client.post(
+        "/api/v1/traps",
+        headers={"Origin": "https://test"},
+        json={"name": "black-box-http-mysql", "trap_profile_id": profile.json()["id"]},
+    )
+    assert created_response.status_code == 201
+    created = created_response.json()
+    secret = await enroll_trap(lifecycle_client, created)
+
+    certificate, private_key = create_test_certificate(tmp_path, name="center-http-mysql")
+    api_port = _free_port()
+    configuration = (
+        await lifecycle_client.get("/assets/v2/config", headers=authorization(secret))
+    ).json()
+    services = {service["protocol"]: service for service in configuration["services"]}
+    queue = EventQueue(tmp_path / "black-box-http-mysql.sqlite3")
+    http_agent = LowHttpAgent(
+        trap_id=configuration["trap_id"],
+        host="127.0.0.1",
+        port=services["http"]["internal_port"],
+        banner=services["http"]["banner"],
+        queue=queue,
+        idle_timeout_seconds=1,
+    )
+    mysql_agent = LowMySqlAgent(
+        trap_id=configuration["trap_id"],
+        host="127.0.0.1",
+        port=services["mysql"]["internal_port"],
+        banner=services["mysql"]["banner"],
+        queue=queue,
+        idle_timeout_seconds=1,
+    )
+    await http_agent.start()
+    await mysql_agent.start()
+    server = uvicorn.Server(
+        uvicorn.Config(
+            lifecycle_app,
+            host="127.0.0.1",
+            port=api_port,
+            ssl_certfile=str(certificate),
+            ssl_keyfile=str(private_key),
+            lifespan="off",
+            log_level="error",
+        )
+    )
+    server_task = asyncio.create_task(server.serve())
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("test API did not start")
+
+        http_reader, http_writer = await asyncio.open_connection(
+            "127.0.0.1", http_agent.port
+        )
+        http_writer.write(b"GET /admin HTTP/1.1\r\n")
+        await http_writer.drain()
+        await asyncio.sleep(0.02)
+        http_writer.write(b"Host: trap\r\n\r\n")
+        await http_writer.drain()
+        assert (await http_reader.read()).startswith(b"HTTP/1.1 200 OK")
+        http_writer.close()
+        await http_writer.wait_closed()
+
+        mysql_reader, mysql_writer = await asyncio.open_connection(
+            "127.0.0.1", mysql_agent.port
+        )
+        header = await mysql_reader.readexactly(4)
+        await mysql_reader.readexactly(int.from_bytes(header[:3], "little"))
+        mysql_writer.close()
+        await mysql_writer.wait_closed()
+
+        for _ in range(100):
+            if queue.pending_count() == 5:
+                break
+            await asyncio.sleep(0.01)
+        assert queue.pending_count() == 5
+        client = AgentClient(
+            f"https://127.0.0.1:{api_port}", secret, ca_file=certificate
+        )
+        assert await client.deliver_pending(queue) == 5
+        assert queue.pending_count() == 0
+    finally:
+        await http_agent.stop()
+        await mysql_agent.stop()
+        queue.close()
+        server.should_exit = True
+        await server_task
+
+    response = await lifecycle_client.get(
+        f"/api/v1/security-events?trap_id={created['id']}"
+    )
+    assert response.status_code == 200
+    events = response.json()["items"]
+    assert {event["target_service"] for event in events} == {"http", "mysql"}
+    assert {event["event_type"] for event in events} == {
+        "connection_opened",
+        "http_request",
+        "connection_closed",
+    }
+    assert len({event["attack_session_id"] for event in events}) == 2
+    async with lifecycle_app.state.database.session_factory() as session:
+        http_session_id = next(
+            event["attack_session_id"]
+            for event in events
+            if event["target_service"] == "http"
+        )
+        http_session = await session.get(AttackSession, http_session_id)
+        assert http_session is not None
+        assert http_session.ended_at is None
+    _assert_events_visible_in_browser(events)
 
 
 def _free_port() -> int:

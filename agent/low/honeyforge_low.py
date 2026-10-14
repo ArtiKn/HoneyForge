@@ -3,7 +3,7 @@ import json
 import logging
 import sqlite3
 import ssl
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -404,6 +404,275 @@ class AgentClient:
         ]
         queue.acknowledge(accepted)
         return len(accepted)
+
+
+class _LowTcpService:
+    """Deep TCP listener seam shared by Low protocol adapters."""
+
+    protocol: str
+
+    def __init__(
+        self,
+        *,
+        trap_id: UUID,
+        host: str,
+        port: int,
+        queue: EventQueue,
+        connection_limit: int = 100,
+        idle_timeout_seconds: float = 10,
+        max_input_bytes: int = 64 * 1024,
+    ) -> None:
+        self.trap_id = trap_id
+        self.host = host
+        self.requested_port = port
+        self.queue = queue
+        self.connection_limit = connection_limit
+        self.idle_timeout_seconds = idle_timeout_seconds
+        self.max_input_bytes = max_input_bytes
+        self._active_connections = 0
+        self._server: asyncio.Server | None = None
+        self._handlers: set[asyncio.Task[None]] = set()
+        self._writers: set[asyncio.StreamWriter] = set()
+
+    @property
+    def port(self) -> int:
+        if self._server is None or not self._server.sockets:
+            return self.requested_port
+        return int(self._server.sockets[0].getsockname()[1])
+
+    async def start(self) -> None:
+        self._server = await asyncio.start_server(
+            self._accept_connection, self.host, self.requested_port
+        )
+
+    async def stop(self) -> None:
+        if self._server is None:
+            return
+        self._server.close()
+        for writer in tuple(self._writers):
+            writer.close()
+        for task in tuple(self._handlers):
+            task.cancel()
+        if self._handlers:
+            await asyncio.gather(*tuple(self._handlers), return_exceptions=True)
+        await self._server.wait_closed()
+        self._server = None
+
+    def _accept_connection(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        if self._active_connections >= self.connection_limit:
+            writer.close()
+            return
+        self._active_connections += 1
+        self._writers.add(writer)
+        task = asyncio.create_task(self._handle_connection(reader, writer))
+        self._handlers.add(task)
+        task.add_done_callback(self._handlers.discard)
+
+    async def _handle_connection(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        peer = writer.get_extra_info("peername")
+        source_ip = str(peer[0]) if peer else "unknown"
+        source_port = int(peer[1]) if peer else 0
+        attack_session_id = self.session_id_for(source_ip)
+        banner = self.banner()
+        self.queue.enqueue(
+            self._event(
+                attack_session_id=attack_session_id,
+                event_type="connection_opened",
+                observed_at=datetime.now(UTC).isoformat(),
+                source_ip=source_ip,
+                source_port=source_port,
+                payload={"banner": banner},
+            )
+        )
+        self._writers.add(writer)
+        bytes_sent = 0
+        try:
+            try:
+                bytes_sent = await self.serve(
+                    reader,
+                    writer,
+                    attack_session_id=attack_session_id,
+                    source_ip=source_ip,
+                    source_port=source_port,
+                )
+            except (ConnectionError, OSError, TimeoutError):
+                pass
+        finally:
+            self.queue.enqueue(
+                self._event(
+                    attack_session_id=attack_session_id,
+                    event_type="connection_closed",
+                    observed_at=datetime.now(UTC).isoformat(),
+                    source_ip=source_ip,
+                    source_port=source_port,
+                    payload={"bytes_sent": bytes_sent},
+                )
+            )
+            writer.close()
+            await writer.wait_closed()
+            self._writers.discard(writer)
+            self._active_connections -= 1
+
+    def _event(
+        self,
+        *,
+        attack_session_id: str,
+        event_type: str,
+        observed_at: str,
+        source_ip: str,
+        source_port: int,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "id": str(uuid4()),
+            "schema_version": 1,
+            "trap_id": str(self.trap_id),
+            "attack_session_id": attack_session_id,
+            "event_type": event_type,
+            "observed_at": observed_at,
+            "source_ip": source_ip,
+            "source_port": source_port,
+            "target_service": self.protocol,
+            "target_port": self.port,
+            "payload": payload,
+        }
+
+    def banner(self) -> str:
+        raise NotImplementedError
+
+    def session_id_for(self, source_ip: str) -> str:
+        return str(uuid4())
+
+    async def serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, **kwargs: str) -> int:
+        raise NotImplementedError
+
+
+class LowHttpAgent(_LowTcpService):
+    protocol = "http"
+
+    def __init__(self, *, banner: str | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.http_banner = banner or "nginx/1.24.0"
+        self._http_sessions: dict[str, tuple[str, datetime, int]] = {}
+
+    def banner(self) -> str:
+        return self.http_banner
+
+    def session_id_for(self, source_ip: str) -> str:
+        now = datetime.now(UTC)
+        existing = self._http_sessions.get(source_ip)
+        if existing is not None and now - existing[1] <= timedelta(minutes=15):
+            self._http_sessions[source_ip] = (existing[0], now, existing[2])
+            return existing[0]
+        if existing is not None:
+            self.queue.enqueue(
+                self._event(
+                    attack_session_id=existing[0],
+                    event_type="connection_closed",
+                    observed_at=now.isoformat(),
+                    source_ip=source_ip,
+                    source_port=existing[2],
+                    payload={"bytes_sent": 0, "session_expired": True},
+                )
+            )
+        session_id = str(uuid4())
+        self._http_sessions[source_ip] = (session_id, now, 0)
+        return session_id
+
+    async def serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, **kwargs: str) -> int:
+        chunks: list[bytes] = []
+        total = 0
+        while b"\r\n\r\n" not in b"".join(chunks):
+            chunk = await asyncio.wait_for(reader.read(1024), timeout=self.idle_timeout_seconds)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > self.max_input_bytes:
+                return 0
+        raw = b"".join(chunks)
+        if len(raw) > self.max_input_bytes:
+            return 0
+        line = raw.split(b"\r\n", 1)[0].decode("latin-1", errors="replace")
+        parts = line.split(" ", 2)
+        if len(parts) == 3:
+            method, path, http_version = parts
+            self.queue.enqueue(
+                self._event(
+                    attack_session_id=kwargs["attack_session_id"],
+                    event_type="http_request",
+                    observed_at=datetime.now(UTC).isoformat(),
+                    source_ip=kwargs["source_ip"],
+                    source_port=int(kwargs["source_port"]),
+                    payload={
+                        "method": method,
+                        "path": path,
+                        "http_version": http_version,
+                        "bytes_received": len(raw),
+                    },
+                )
+            )
+            session = self._http_sessions.get(kwargs["source_ip"])
+            if session is not None:
+                self._http_sessions[kwargs["source_ip"]] = (
+                    session[0], session[1], int(kwargs["source_port"])
+                )
+        body = b"<html><title>HoneyForge</title><body>HoneyForge</body></html>"
+        response = (
+            b"HTTP/1.1 200 OK\r\nServer: "
+            + self.http_banner.encode()
+            + b"\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: "
+            + str(len(body)).encode()
+            + b"\r\nConnection: close\r\n\r\n"
+            + body
+        )
+        writer.write(response)
+        await writer.drain()
+        return len(response)
+
+
+class LowMySqlAgent(_LowTcpService):
+    protocol = "mysql"
+
+    def __init__(self, *, banner: str | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.mysql_banner = banner or "8.0.36-HoneyForge"
+
+    def banner(self) -> str:
+        return self.mysql_banner
+
+    def _handshake(self) -> bytes:
+        payload = (
+            b"\x0a"
+            + self.mysql_banner.encode()
+            + b"\x00"
+            + (1).to_bytes(4, "little")
+            + b"abcdefgh\x00"
+            + (0xFFFF).to_bytes(2, "little")
+            + b"\x21"
+            + (2).to_bytes(2, "little")
+            + (0xFFFF).to_bytes(2, "little")
+            + b"\x15"
+            + b"\x00" * 10
+            + b"ijklmnopqrst\x00"
+            + b"mysql_native_password\x00"
+        )
+        return len(payload).to_bytes(3, "little") + b"\x00" + payload
+
+    async def serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, **kwargs: str) -> int:
+        handshake = self._handshake()
+        writer.write(handshake)
+        await writer.drain()
+        received = await asyncio.wait_for(
+            reader.read(self.max_input_bytes + 1), timeout=self.idle_timeout_seconds
+        )
+        if len(received) > self.max_input_bytes:
+            return len(handshake)
+        return len(handshake)
 
 
 class LowSshAgent:

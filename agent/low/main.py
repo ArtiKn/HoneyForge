@@ -9,7 +9,14 @@ from pathlib import Path
 from urllib.error import URLError
 from uuid import UUID
 
-from honeyforge_low import AgentClient, EventQueue, JsonLogFormatter, LowSshAgent
+from honeyforge_low import (
+    AgentClient,
+    EventQueue,
+    JsonLogFormatter,
+    LowHttpAgent,
+    LowMySqlAgent,
+    LowSshAgent,
+)
 
 log_handler = logging.StreamHandler()
 log_handler.setFormatter(JsonLogFormatter())
@@ -29,27 +36,42 @@ async def run() -> None:
     )
     configuration = await client.fetch_configuration()
     if configuration["interaction_level"] != "low":
-        raise RuntimeError("Low SSH Agent requires a low-interaction Trap Profile")
-    ssh_service = next(
-        service
-        for service in configuration["services"]
-        if service["protocol"] == "ssh"
-    )
-    banner = ssh_service.get("banner") or "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.10"
+        raise RuntimeError("Low Trap Agent requires a low-interaction Trap Profile")
     queue = EventQueue(
         Path(os.environ["EVENT_QUEUE_PATH"]),
         max_events=int(os.getenv("EVENT_QUEUE_MAX_EVENTS", "100000")),
         max_bytes=int(os.getenv("EVENT_QUEUE_MAX_BYTES", str(256 * 1024 * 1024))),
     )
-    agent = LowSshAgent(
-        trap_id=UUID(configuration["trap_id"]),
-        host=os.getenv("LISTEN_HOST", "0.0.0.0"),
-        port=int(ssh_service["internal_port"]),
-        banner=banner,
-        queue=queue,
-    )
-    await agent.start()
-    log.info("Low SSH Trap started on port %s", agent.port)
+    common = {
+        "trap_id": UUID(configuration["trap_id"]),
+        "host": os.getenv("LISTEN_HOST", "0.0.0.0"),
+        "queue": queue,
+    }
+    agents = []
+    for service in configuration["services"]:
+        protocol = service["protocol"]
+        settings = {
+            **common,
+            "port": int(service["internal_port"]),
+            "banner": service.get("banner"),
+        }
+        if protocol == "ssh":
+            agent = LowSshAgent(
+                **{
+                    **settings,
+                    "banner": service.get("banner")
+                    or "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.10",
+                }
+            )
+        elif protocol == "http":
+            agent = LowHttpAgent(**settings)
+        elif protocol == "mysql":
+            agent = LowMySqlAgent(**settings)
+        else:
+            raise RuntimeError(f"Unsupported Low service protocol: {protocol}")
+        await agent.start()
+        agents.append(agent)
+        log.info("Low %s Trap service started on port %s", protocol, agent.port)
     health_interval = float(os.getenv("HEALTH_INTERVAL_SECONDS", "30"))
     delivery_interval = float(os.getenv("DELIVERY_INTERVAL_SECONDS", "1"))
     next_health_at = 0.0
@@ -74,7 +96,8 @@ async def run() -> None:
                     next_health_at = now + health_interval
             await asyncio.sleep(delivery_interval)
     finally:
-        await agent.stop()
+        for agent in agents:
+            await agent.stop()
         queue.close()
 
 

@@ -123,6 +123,27 @@ async def test_operator_creates_a_trap_profile(profile_client) -> None:
     }
 
 
+async def test_low_profile_configures_http_and_mysql_independently(profile_client) -> None:
+    response = await profile_client.post(
+        "/api/v1/trap-profiles",
+        headers={"Origin": "https://test"},
+        json={
+            "name": "Web and MySQL decoy",
+            "interaction_level": "low",
+            "services": [
+                {"protocol": "http", "internal_port": 80},
+                {"protocol": "mysql", "internal_port": 3306},
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["services"] == [
+        {"protocol": "http", "internal_port": 80, "emulator_settings": {}},
+        {"protocol": "mysql", "internal_port": 3306, "emulator_settings": {}},
+    ]
+
+
 async def test_trap_profile_rejects_deployment_and_credential_fields(
     profile_client,
 ) -> None:

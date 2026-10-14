@@ -99,7 +99,15 @@ class SecurityEventIngestor:
                     status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail="Attack Session could not be created",
                 )
-            if incoming.event_type == "connection_closed":
+            # HTTP Attack Sessions span multiple short-lived TCP connections
+            # and are closed by inactivity at the trap, not by each socket.
+            if (
+                incoming.event_type == "connection_closed"
+                and (
+                    incoming.target_service != "http"
+                    or incoming.payload.get("session_expired") is True
+                )
+            ):
                 attack_session.ended_at = max(
                     filter(None, (attack_session.ended_at, incoming.observed_at))
                 )

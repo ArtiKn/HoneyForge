@@ -51,6 +51,8 @@ services:
       - agent_low_data:/var/lib/honeyforge
     ports:
       - "${LOW_SSH_PORT:-2222}:${LOW_SSH_INTERNAL_PORT:-22}"
+      - "${LOW_HTTP_PORT:-8080}:${LOW_HTTP_INTERNAL_PORT:-80}"
+      - "${LOW_MYSQL_PORT:-33060}:${LOW_MYSQL_INTERNAL_PORT:-3306}"
     extra_hosts:
       - "assets.cdn-static.example:host-gateway"
     deploy:

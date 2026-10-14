@@ -7,7 +7,8 @@ The masked telemetry endpoint (task 4.2) lives in ``routers/telemetry.py``.
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import Depends, FastAPI, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +21,7 @@ from center.api.database import Database
 from center.api.operator_auth import operator_for_session, seed_operator
 from center.api.realtime.ws_manager import manager
 from center.api.routers import (
+    agent,
     auth,
     dashboard,
     security_events,
@@ -27,6 +29,7 @@ from center.api.routers import (
     trap_profiles,
     traps,
 )
+from center.api.trap_access import monitor_offline_traps
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -41,8 +44,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app_settings.operator_username,
             app_settings.operator_password,
         )
-        yield
-        await database.close()
+        health_monitor = asyncio.create_task(
+            monitor_offline_traps(
+                database.session_factory,
+                health_timeout_seconds=app_settings.health_timeout_seconds,
+                sweep_interval_seconds=app_settings.health_sweep_interval_seconds,
+            )
+        )
+        try:
+            yield
+        finally:
+            health_monitor.cancel()
+            with suppress(asyncio.CancelledError):
+                await health_monitor
+            await database.close()
 
     application = FastAPI(
         title=app_settings.app_name,
@@ -100,6 +115,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dependencies=protected,
     )
     application.include_router(telemetry.router)
+    application.include_router(agent.router)
 
     @application.get("/health", tags=["health"])
     @application.get("/api/health", tags=["health"], include_in_schema=False)

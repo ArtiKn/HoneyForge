@@ -32,6 +32,18 @@ class Trap(CreatedAtMixin, Base):
     region: Mapped[str | None] = mapped_column(String(128))
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     agent_meta: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    enrollment_token_hash: Mapped[str | None] = mapped_column(String)
+    enrollment_token_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    enrollment_token_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    current_secret_hash: Mapped[str | None] = mapped_column(String)
+    previous_secret_hash: Mapped[str | None] = mapped_column(String)
+    previous_secret_valid_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     trap_profile: Mapped["TrapProfile"] = relationship(back_populates="traps")  # noqa: F821
     security_events: Mapped[list["SecurityEvent"]] = relationship(  # noqa: F821

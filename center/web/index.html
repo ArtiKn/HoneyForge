@@ -19,6 +19,19 @@
     <h1 class="reveal">Shape the trap before it meets the network.</h1>
     <p class="lead reveal">Define reusable service behavior once, version every change, and keep the history needed to understand what each Trap presented.</p>
     <a class="button primary-link reveal" href="/profiles.html">Manage Trap Profiles</a>
+    <section class="status-board reveal" aria-labelledby="fleet-status-heading">
+      <div class="status-heading">
+        <p class="eyebrow">Live fleet</p>
+        <h2 id="fleet-status-heading">Trap status</h2>
+      </div>
+      <div class="status-grid" aria-live="polite">
+        <article class="status-card" data-status="provisioning"><strong id="status-provisioning">0</strong><span>Provisioning</span></article>
+        <article class="status-card" data-status="online"><strong id="status-online">0</strong><span>Online</span></article>
+        <article class="status-card" data-status="degraded"><strong id="status-degraded">0</strong><span>Degraded</span></article>
+        <article class="status-card" data-status="offline"><strong id="status-offline">0</strong><span>Offline</span></article>
+        <article class="status-card" data-status="revoked"><strong id="status-revoked">0</strong><span>Revoked</span></article>
+      </div>
+    </section>
   </main>
   <script>
     fetch('/api/v1/dashboard', { credentials: 'same-origin' })
@@ -29,6 +42,21 @@
       })
       .then(d => { document.getElementById('operator').textContent = 'Operator: ' + d.operator; })
       .catch(() => { document.getElementById('operator').textContent = 'Dashboard unavailable'; });
+
+    fetch('/api/v1/traps', { credentials: 'same-origin' })
+      .then(r => {
+        if (r.status === 401) window.location.replace('/login.html');
+        if (!r.ok) throw new Error('fleet unavailable');
+        return r.json();
+      })
+      .then(traps => {
+        const counts = { provisioning: 0, online: 0, degraded: 0, offline: 0, revoked: 0 };
+        traps.forEach(trap => { if (trap.status in counts) counts[trap.status] += 1; });
+        Object.entries(counts).forEach(([status, count]) => {
+          document.getElementById('status-' + status).textContent = count;
+        });
+      })
+      .catch(() => { document.querySelector('.status-grid').setAttribute('data-unavailable', 'true'); });
 
     document.getElementById('logout').addEventListener('click', () => {
       fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'same-origin' })

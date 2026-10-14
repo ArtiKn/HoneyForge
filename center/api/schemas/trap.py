@@ -24,3 +24,27 @@ class TrapRead(TrapCreate):
     last_seen_at: datetime | None = None
     created_at: datetime
 
+
+class TrapProvisioned(TrapRead):
+    enrollment_token: str
+
+
+class EnrollmentRequest(BaseModel):
+    enrollment_token: str = Field(min_length=32, max_length=256)
+
+
+class EnrollmentResponse(BaseModel):
+    trap_id: UUID
+    trap_secret: str
+
+
+class AgentHealthReport(BaseModel):
+    agent_version: str = Field(min_length=1, max_length=64)
+    active_profile_version: int = Field(ge=1)
+    buffer_depth: int = Field(ge=0)
+    configuration_errors: list[str] = Field(default_factory=list, max_length=20)
+
+
+class RotationResponse(BaseModel):
+    trap_secret: str
+

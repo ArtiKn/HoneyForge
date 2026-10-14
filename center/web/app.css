@@ -44,6 +44,19 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .dashboard h1 { grid-column: 1 / 9; max-width: 11ch; margin: 0; font-size: var(--head); font-weight: 560; line-height: .96; letter-spacing: -.055em; }
 .dashboard .lead { grid-column: 9 / 13; align-self: end; margin: 0; max-width: 27ch; color: var(--muted); }
 .dashboard .primary-link { grid-column: 9 / 13; justify-self: start; margin-top: 1rem; }
+.status-board { grid-column: 1 / 13; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 1.5rem; margin-top: clamp(3rem, 8vh, 7rem); padding-top: 1.5rem; border-top: 1px solid #aab8b1; }
+.status-heading { grid-column: 1 / 4; }
+.status-heading h2 { margin: .25rem 0 0; font-size: clamp(1.8rem, 2.6vw, 3.2rem); font-weight: 560; letter-spacing: -.045em; line-height: 1; }
+.eyebrow { margin: 0; color: var(--muted); font-size: .72rem; font-weight: 760; letter-spacing: .14em; text-transform: uppercase; }
+.status-grid { grid-column: 4 / 13; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.status-card { min-height: 8.5rem; padding: .9rem; border-left: 1px solid #aab8b1; display: flex; flex-direction: column; justify-content: space-between; }
+.status-card strong { font-size: clamp(2rem, 3.5vw, 4rem); font-weight: 520; font-variant-numeric: tabular-nums; line-height: 1; }
+.status-card span { color: var(--muted); font-size: var(--small); }
+.status-card[data-status="online"] { background: var(--accent); }
+.status-card[data-status="online"] span { color: var(--ink); }
+.status-card[data-status="degraded"] { background: #f1c75b; }
+.status-card[data-status="revoked"] { color: var(--danger); }
+.status-grid[data-unavailable="true"] { opacity: .45; }
 
 .profiles-shell { min-height: calc(100svh - 4.5rem); display: grid; grid-template-columns: minmax(19rem, 32vw) minmax(0, 1fr); }
 .profile-index { padding: 2rem var(--margin) 4rem; background: var(--dark); color: var(--dark-ink); }
@@ -93,6 +106,9 @@ textarea { min-height: 5.5rem; resize: vertical; }
   .dashboard h1 { max-width: 10ch; }
   .dashboard .lead { margin-top: 2rem; }
   .dashboard .primary-link { display: inline-block; margin-top: 1.5rem; }
+  .status-board { display: block; margin-top: 4rem; }
+  .status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 1.5rem; }
+  .status-card { min-height: 7rem; border-top: 1px solid #aab8b1; }
   .profiles-shell { display: block; }
   .profile-index { min-height: 17rem; padding-bottom: 2rem; }
   .index-head { margin-bottom: 1.5rem; }

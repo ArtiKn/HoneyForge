@@ -1,7 +1,10 @@
-from fastapi import APIRouter, HTTPException, Request, status
+from typing import Annotated
+
+from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import ValidationError
 
 from center.api.schemas.telemetry import TelemetryBatch
+from center.api.trap_access import TrapAccess
 from center.collector.ingest import ingest
 
 router = APIRouter()
@@ -26,7 +29,10 @@ async def ping() -> dict[str, str]:
         }
     },
 )
-async def receive_telemetry(request: Request) -> dict[str, bool]:
+async def receive_telemetry(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, bool]:
     """Accept JSON hidden behind the CDN-like content type used by agents."""
 
     try:
@@ -36,7 +42,20 @@ async def receive_telemetry(request: Request) -> dict[str, bool]:
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=exc.errors(include_url=False),
         ) from exc
-    ingest(batch.events)
+    if authorization is None or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+    credential = authorization.removeprefix("Bearer ")
+    async with request.app.state.database.session_factory() as session:
+        trap = await TrapAccess(session).authenticate(credential)
+        if trap is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+        if any(event.trap_id != trap.id for event in batch.events):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Telemetry batch contains an event for another Trap",
+            )
+        ingest(batch.events)
+        await session.commit()
     return {"ok": True}
 
 

@@ -56,6 +56,12 @@ def upgrade() -> None:
         sa.Column("region", sa.String(128)),
         sa.Column("last_seen_at", sa.DateTime(timezone=True)),
         sa.Column("agent_meta", postgresql.JSONB, nullable=False),
+        sa.Column("enrollment_token_hash", sa.String),
+        sa.Column("enrollment_token_expires_at", sa.DateTime(timezone=True)),
+        sa.Column("enrollment_token_used_at", sa.DateTime(timezone=True)),
+        sa.Column("current_secret_hash", sa.String),
+        sa.Column("previous_secret_hash", sa.String),
+        sa.Column("previous_secret_valid_until", sa.DateTime(timezone=True)),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.CheckConstraint("status IN ('provisioning', 'online', 'degraded', 'offline', 'revoked')", name="status"),
     )

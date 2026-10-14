@@ -61,8 +61,7 @@ async def test_masked_telemetry_endpoint_accepts_javascript_content_type(
         headers={"Content-Type": "application/javascript"},
         json=payload,
     )
-    assert response.status_code == 200
-    assert response.json() == {"ok": True}
+    assert response.status_code == 401
 
 
 @pytest.mark.anyio

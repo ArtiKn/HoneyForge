@@ -34,6 +34,18 @@ class Settings(BaseSettings):
     operator_password: str = Field(
         default="change-me-in-production", validation_alias="OPERATOR_PASSWORD"
     )
+    enrollment_token_minutes: int = Field(
+        default=10, validation_alias="ENROLLMENT_TOKEN_MINUTES"
+    )
+    trap_secret_overlap_minutes: int = Field(
+        default=5, validation_alias="TRAP_SECRET_OVERLAP_MINUTES"
+    )
+    health_timeout_seconds: int = Field(
+        default=90, validation_alias="HEALTH_TIMEOUT_SECONDS"
+    )
+    health_sweep_interval_seconds: int = Field(
+        default=30, validation_alias="HEALTH_SWEEP_INTERVAL_SECONDS", gt=0
+    )
 
 
 @lru_cache

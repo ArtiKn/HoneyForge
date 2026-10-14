@@ -64,21 +64,30 @@ services:
   agent-medium:
     <<: *agent-common
     build:
-      context: ../agent/medium
+      context: ..
+      dockerfile: agent/medium/Dockerfile
     image: honeyforge/agent-medium:dev
     container_name: hf-agent-medium
     environment:
       CENTER_URL: ${AGENT_CENTER_URL:-https://assets.cdn-static.example}
-      AGENT_TOKEN: ${AGENT_TOKEN:-change-me}
+      TRAP_SECRET_FILE: /run/secrets/medium_trap_secret
+      CENTER_CA_FILE: /etc/honeyforge/center-ca.crt
+      EVENT_QUEUE_PATH: /var/lib/honeyforge/events.sqlite3
+      EVENT_QUEUE_MAX_EVENTS: ${EVENT_QUEUE_MAX_EVENTS:-100000}
+      EVENT_QUEUE_MAX_BYTES: ${EVENT_QUEUE_MAX_BYTES:-268435456}
+      DELIVERY_INTERVAL_SECONDS: ${DELIVERY_INTERVAL_SECONDS:-1}
       HONEYPOT_ID: ${HONEYPOT_ID_MEDIUM:-medium-01}
       HONEYPOT_LEVEL: medium
-      TELEMETRY_PATH: ${TELEMETRY_PATH:-/assets/v2/init}
-      BEACON_INTERVAL_SECONDS: ${BEACON_INTERVAL_SECONDS:-60}
-      BEACON_JITTER_SECONDS: ${BEACON_JITTER_SECONDS:-30}
-      PROCESS_NAME: ${PROCESS_NAME:-syslog-relay}
-      VERIFY_TLS: ${VERIFY_TLS:-0}
+      PROCESS_NAME: ${PROCESS_NAME:-honeyforge-agent}
     extra_hosts:
       - "assets.cdn-static.example:host-gateway"
+    secrets:
+      - medium_trap_secret
+    volumes:
+      - ./nginx/certs/center.crt:/etc/honeyforge/center-ca.crt:ro
+      - medium_agent_data:/var/lib/honeyforge
+    ports:
+      - "${MEDIUM_SSH_PORT:-2223}:${MEDIUM_SSH_INTERNAL_PORT:-22}"
     deploy:
       resources:
         limits:
@@ -92,7 +101,10 @@ networks:
 
 volumes:
   agent_low_data:
+  medium_agent_data:
 
 secrets:
   low_trap_secret:
     file: ${LOW_TRAP_SECRET_FILE:-./secrets/low_trap_secret}
+  medium_trap_secret:
+    file: ${MEDIUM_TRAP_SECRET_FILE:-./secrets/medium_trap_secret}

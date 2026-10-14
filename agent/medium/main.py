@@ -1,32 +1,384 @@
-"""Medium-interaction honeypot agent stub (tasks 3.2, 3.3, 3.4, 6.2).
-
-Placeholder process for the honeypot fleet skeleton. Fake SSH/HTTP emulators,
-the fake shell and the masked telemetry channel are implemented by the
-security role (role 1).
-"""
+"""Medium-interaction fake SSH Trap service."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+from urllib.error import URLError
+from uuid import UUID, uuid4
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-log = logging.getLogger(os.getenv("PROCESS_NAME", "agent"))
+import asyncssh
+
+from agent.low.honeyforge_low import AgentClient, EventQueue, JsonLogFormatter
+
+log = logging.getLogger(os.getenv("PROCESS_NAME", "honeyforge-agent"))
+
+
+@dataclass
+class _AttackConnection:
+    attack_session_id: str
+    source_ip: str
+    source_port: int
+    bytes_sent: int = 0
+    username: str = "attacker"
+    auth_attempts: int = 0
+
+
+class _FakeShellSession(asyncssh.SSHServerSession[str]):
+    def __init__(self, service: "MediumSshService", attack: _AttackConnection) -> None:
+        self.service = service
+        self.attack = attack
+        self.channel: asyncssh.SSHServerChannel[str] | None = None
+        self.input_buffer = ""
+        self.idle_timer: asyncio.TimerHandle | None = None
+
+    def connection_made(self, channel: asyncssh.SSHServerChannel[str]) -> None:
+        self.channel = channel
+
+    def shell_requested(self) -> bool:
+        return True
+
+    def session_started(self) -> None:
+        self._reset_idle_timer()
+        self._write("Welcome to Ubuntu 22.04 LTS (HoneyForge)\r\n$ ")
+
+    def data_received(self, data: str, datatype: asyncssh.DataType) -> None:
+        self._reset_idle_timer()
+        self.input_buffer += data
+        if len(self.input_buffer.encode()) > self.service.max_input_bytes:
+            self.service.close_connection(self.attack)
+            return
+        while "\n" in self.input_buffer:
+            raw_command, self.input_buffer = self.input_buffer.split("\n", 1)
+            command = raw_command.rstrip("\r")
+            self.service.enqueue(
+                self.attack,
+                "command_entered",
+                {"command": command},
+            )
+            response, should_close = self.service.command_response(
+                command, self.attack.username
+            )
+            self._write(response)
+            if should_close and self.channel is not None:
+                self.channel.exit(0)
+                self.channel.close()
+                return
+
+    def connection_lost(self, exc: Exception | None) -> None:
+        if self.idle_timer is not None:
+            self.idle_timer.cancel()
+
+    def _reset_idle_timer(self) -> None:
+        if self.idle_timer is not None:
+            self.idle_timer.cancel()
+        self.idle_timer = asyncio.get_running_loop().call_later(
+            self.service.idle_timeout_seconds, self._close_idle_session
+        )
+
+    def _close_idle_session(self) -> None:
+        self.service.close_connection(self.attack)
+
+    def _write(self, response: str) -> None:
+        if self.channel is not None:
+            self.channel.write(response)
+            self.attack.bytes_sent += len(response.encode())
+
+
+class _FakeSshServer(asyncssh.SSHServer):
+    def __init__(self, service: "MediumSshService") -> None:
+        self.service = service
+        self.connection: asyncssh.SSHServerConnection | None = None
+        self.attack: _AttackConnection | None = None
+
+    def connection_made(self, connection: asyncssh.SSHServerConnection) -> None:
+        peer = connection.get_extra_info("peername")
+        source_ip, source_port = (str(peer[0]), int(peer[1])) if peer else ("unknown", 0)
+        if not self.service.accept_connection(connection):
+            connection.abort()
+            return
+        self.connection = connection
+        self.attack = _AttackConnection(str(uuid4()), source_ip, source_port)
+        self.service.register_session(self.attack, connection)
+        self.service.enqueue(
+            self.attack, "connection_opened", {"banner": self.service.banner}
+        )
+
+    def connection_lost(self, exc: Exception | None) -> None:
+        if self.attack is not None:
+            self.service.enqueue(
+                self.attack,
+                "connection_closed",
+                {"bytes_sent": self.attack.bytes_sent},
+            )
+        if self.connection is not None:
+            self.service.release_connection(self.connection)
+
+    def begin_auth(self, username: str) -> bool:
+        return True
+
+    def password_auth_supported(self) -> bool:
+        return True
+
+    def validate_password(self, username: str, password: str) -> bool:
+        if self.attack is None:
+            return False
+        self.attack.auth_attempts += 1
+        accepted = self.attack.auth_attempts <= self.service.max_attempts
+        self.attack.username = username[:256] or "attacker"
+        self.service.enqueue(
+            self.attack,
+            "authentication_attempt",
+            {
+                "username": username[:256] or "unknown",
+                "password": password[:1024],
+                "accepted": accepted,
+            },
+        )
+        return accepted
+
+    def session_requested(self) -> _FakeShellSession | bool:
+        if self.attack is None:
+            return False
+        return _FakeShellSession(self.service, self.attack)
+
+
+class MediumSshService:
+    """Real SSH transport backed only by a bounded, literal fake shell."""
+
+    def __init__(
+        self,
+        *,
+        trap_id: UUID,
+        host: str,
+        port: int,
+        queue: EventQueue,
+        banner: str = "OpenSSH_8.9p1 Ubuntu-3ubuntu0.10",
+        connection_limit: int = 100,
+        idle_timeout_seconds: float = 30,
+        max_input_bytes: int = 4096,
+        max_attempts: int = 3,
+    ) -> None:
+        if min(connection_limit, max_input_bytes, max_attempts) < 1:
+            raise ValueError("Medium SSH limits must be positive")
+        self.trap_id = trap_id
+        self.host = host
+        self.requested_port = port
+        self.queue = queue
+        self.banner = banner.removeprefix("SSH-2.0-")
+        self.connection_limit = connection_limit
+        self.idle_timeout_seconds = idle_timeout_seconds
+        self.max_input_bytes = max_input_bytes
+        self.max_attempts = max_attempts
+        self._server: asyncssh.SSHAcceptor | None = None
+        self._connections: set[asyncssh.SSHServerConnection] = set()
+        self._connection_by_session: dict[str, asyncssh.SSHServerConnection] = {}
+
+    @property
+    def port(self) -> int:
+        if self._server is None:
+            return self.requested_port
+        return int(self._server.get_port())
+
+    async def start(self) -> None:
+        host_key = asyncssh.generate_private_key("ssh-ed25519")
+        self._server = await asyncssh.create_server(
+            lambda: _FakeSshServer(self),
+            self.host,
+            self.requested_port,
+            server_host_keys=[host_key],
+            server_version=self.banner,
+            login_timeout=self.idle_timeout_seconds,
+        )
+
+    async def stop(self) -> None:
+        await self.stop_accepting()
+        for connection in tuple(self._connections):
+            connection.close()
+
+    async def stop_accepting(self) -> None:
+        if self._server is None:
+            return
+        self._server.close()
+        await self._server.wait_closed()
+        self._server = None
+
+    def accept_connection(self, connection: asyncssh.SSHServerConnection) -> bool:
+        if len(self._connections) >= self.connection_limit:
+            return False
+        self._connections.add(connection)
+        return True
+
+    def register_session(
+        self, attack: _AttackConnection, connection: asyncssh.SSHServerConnection
+    ) -> None:
+        self._connection_by_session[attack.attack_session_id] = connection
+
+    def close_connection(self, attack: _AttackConnection) -> None:
+        connection = self._connection_by_session.get(attack.attack_session_id)
+        if connection is not None:
+            connection.abort()
+
+    def release_connection(self, connection: asyncssh.SSHServerConnection) -> None:
+        self._connections.discard(connection)
+        self._connection_by_session = {
+            session_id: item
+            for session_id, item in self._connection_by_session.items()
+            if item is not connection
+        }
+
+    @staticmethod
+    def command_response(command: str, username: str) -> tuple[str, bool]:
+        responses = {
+            "pwd": f"/home/{username}\r\n$ ",
+            "whoami": f"{username}\r\n$ ",
+            "ls": "README.txt\r\n$ ",
+            "cat /etc/passwd": "root:x:0:0:root:/root:/bin/bash\r\n$ ",
+            "uname -a": "Linux honeyforge 5.15.0-generic x86_64 GNU/Linux\r\n$ ",
+            "exit": "logout\r\n",
+            "logout": "logout\r\n",
+        }
+        if command in ("exit", "logout"):
+            return responses[command], True
+        return responses.get(command, "command not found\r\n$ "), False
+
+    def enqueue(
+        self,
+        attack: _AttackConnection,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        self.queue.enqueue(
+            {
+                "id": str(uuid4()),
+                "schema_version": 1,
+                "trap_id": str(self.trap_id),
+                "attack_session_id": attack.attack_session_id,
+                "event_type": event_type,
+                "observed_at": datetime.now(UTC).isoformat(),
+                "source_ip": attack.source_ip,
+                "source_port": attack.source_port,
+                "target_service": "ssh",
+                "target_port": self.port,
+                "payload": payload,
+            }
+        )
 
 
 async def run() -> None:
-    """Run the medium honeypot placeholder loop."""
-    log.info(
-        "medium agent started: id=%s center=%s",
-        os.getenv("HONEYPOT_ID", "unknown"),
-        os.getenv("CENTER_URL", ""),
+    secret_file = Path(os.environ["TRAP_SECRET_FILE"])
+    client = AgentClient(
+        os.environ["CENTER_URL"],
+        secret_file.read_text(encoding="utf-8").strip(),
+        ca_file=Path(os.environ["CENTER_CA_FILE"]),
     )
-    while True:
-        await asyncio.sleep(3600)
+    configuration = await client.fetch_configuration()
+    if configuration["interaction_level"] != "medium":
+        raise RuntimeError("Medium Trap Agent requires a medium-interaction Trap Profile")
+    queue = EventQueue(
+        Path(os.environ["EVENT_QUEUE_PATH"]),
+        max_events=int(os.getenv("EVENT_QUEUE_MAX_EVENTS", "100000")),
+        max_bytes=int(os.getenv("EVENT_QUEUE_MAX_BYTES", str(256 * 1024 * 1024))),
+    )
+    services: list[MediumSshService] = []
+    retired_services: list[MediumSshService] = []
+    configuration_errors: list[str] = []
+
+    def configured_services(config: dict[str, Any]) -> list[MediumSshService]:
+        if config["interaction_level"] != "medium":
+            raise RuntimeError(
+                "Medium Trap Agent requires a medium-interaction Trap Profile"
+            )
+        result: list[MediumSshService] = []
+        for definition in config["services"]:
+            if definition["protocol"] != "ssh":
+                raise RuntimeError(
+                    f"Unsupported Medium service protocol: {definition['protocol']}"
+                )
+            settings = definition.get("emulator_settings", {})
+            result.append(
+                MediumSshService(
+                    trap_id=UUID(config["trap_id"]),
+                    host=os.getenv("LISTEN_HOST", "0.0.0.0"),
+                    port=int(definition["internal_port"]),
+                    queue=queue,
+                    banner=definition.get("banner")
+                    or "OpenSSH_8.9p1 Ubuntu-3ubuntu0.10",
+                    max_attempts=int(settings.get("max_attempts") or 3),
+                )
+            )
+        return result
+
+    try:
+        services = configured_services(configuration)
+        for service in services:
+            await service.start()
+        health_interval = float(os.getenv("HEALTH_INTERVAL_SECONDS", "30"))
+        profile_interval = float(os.getenv("PROFILE_CHECK_INTERVAL_SECONDS", "30"))
+        delivery_interval = float(os.getenv("DELIVERY_INTERVAL_SECONDS", "1"))
+        next_health_at = 0.0
+        next_profile_at = asyncio.get_running_loop().time() + profile_interval
+        while True:
+            try:
+                await client.deliver_pending(queue)
+            except (OSError, URLError, ValueError):
+                log.exception("Security Event delivery failed; events remain queued")
+            now = asyncio.get_running_loop().time()
+            if now >= next_profile_at:
+                try:
+                    candidate_configuration = await client.fetch_configuration()
+                    if (
+                        candidate_configuration["profile_version"]
+                        != configuration["profile_version"]
+                    ):
+                        candidate_services = configured_services(candidate_configuration)
+                        for service in services:
+                            await service.stop_accepting()
+                        try:
+                            for candidate in candidate_services:
+                                await candidate.start()
+                        except Exception:
+                            for candidate in candidate_services:
+                                await candidate.stop()
+                            for service in services:
+                                await service.start()
+                            raise
+                        retired_services.extend(services)
+                        services = candidate_services
+                        configuration = candidate_configuration
+                    configuration_errors = []
+                except (OSError, URLError, RuntimeError, ValueError) as exc:
+                    configuration_errors = [str(exc)]
+                    log.exception("Trap Profile check or apply failed")
+                next_profile_at = now + profile_interval
+            if now >= next_health_at:
+                try:
+                    await client.report_health(
+                        queue,
+                        agent_version=os.getenv("AGENT_VERSION", "0.1.0"),
+                        active_profile_version=configuration["profile_version"],
+                        configuration_errors=configuration_errors,
+                    )
+                except (OSError, URLError, ValueError):
+                    log.exception("Agent Health Report delivery failed")
+                else:
+                    next_health_at = now + health_interval
+            await asyncio.sleep(delivery_interval)
+    finally:
+        for service in [*services, *retired_services]:
+            await service.stop()
+        queue.close()
 
 
 if __name__ == "__main__":
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonLogFormatter())
+    logging.basicConfig(level=logging.INFO, handlers=[handler])
     try:
         asyncio.run(run())
     except KeyboardInterrupt:

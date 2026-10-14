@@ -16,6 +16,7 @@ from uuid import uuid4
 import httpx
 import pytest
 import uvicorn
+import asyncssh
 from sqlalchemy import func, select
 
 from agent.low.honeyforge_low import (
@@ -25,6 +26,7 @@ from agent.low.honeyforge_low import (
     LowMySqlAgent,
     LowSshAgent,
 )
+from agent.medium.main import MediumSshService
 from center.api.config import Settings
 from center.api.main import create_app
 from center.api.models import AttackSession, AuditEntry, SecurityEvent, Trap
@@ -913,6 +915,87 @@ async def test_black_box_low_http_and_mysql_reach_operator_api(
         http_session = await session.get(AttackSession, http_session_id)
         assert http_session is not None
         assert http_session.ended_at is None
+    _assert_events_visible_in_browser(events)
+
+
+async def test_black_box_medium_fake_ssh_reaches_operator_api(
+    lifecycle_app, lifecycle_client, tmp_path: Path
+) -> None:
+    ssh_port = _free_port()
+    profile = await lifecycle_client.post(
+        "/api/v1/trap-profiles",
+        headers={"Origin": "https://test"},
+        json={
+            "name": "Black-box Medium SSH",
+            "interaction_level": "medium",
+            "services": [
+                {
+                    "protocol": "ssh",
+                    "internal_port": ssh_port,
+                    "emulator_settings": {"shell": "fixed"},
+                }
+            ],
+        },
+    )
+    assert profile.status_code == 201
+    created_response = await lifecycle_client.post(
+        "/api/v1/traps",
+        headers={"Origin": "https://test"},
+        json={"name": "black-box-medium-ssh", "trap_profile_id": profile.json()["id"]},
+    )
+    created = created_response.json()
+    secret = await enroll_trap(lifecycle_client, created)
+    certificate, private_key = create_test_certificate(tmp_path, name="center-medium")
+    api_port = _free_port()
+    configuration = (
+        await lifecycle_client.get("/assets/v2/config", headers=authorization(secret))
+    ).json()
+    queue = EventQueue(tmp_path / "black-box-medium.sqlite3")
+    service = MediumSshService(
+        trap_id=configuration["trap_id"], host="127.0.0.1",
+        port=configuration["services"][0]["internal_port"], queue=queue,
+        idle_timeout_seconds=1,
+    )
+    await service.start()
+    server = uvicorn.Server(uvicorn.Config(
+        lifecycle_app, host="127.0.0.1", port=api_port,
+        ssl_certfile=str(certificate), ssl_keyfile=str(private_key),
+        lifespan="off", log_level="error",
+    ))
+    server_task = asyncio.create_task(server.serve())
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            await asyncio.sleep(0.01)
+        async with asyncssh.connect(
+            "127.0.0.1", port=service.port, username="root", password="secret",
+            known_hosts=None,
+        ) as connection:
+            process = await connection.create_process()
+            await process.stdout.readuntil("$ ")
+            process.stdin.write("whoami\nexit\n")
+            await process.stdout.read()
+        for _ in range(100):
+            if queue.pending_count() == 5:
+                break
+            await asyncio.sleep(0.01)
+        client = AgentClient(f"https://127.0.0.1:{api_port}", secret, ca_file=certificate)
+        assert await client.deliver_pending(queue) == 5
+    finally:
+        await service.stop()
+        queue.close()
+        server.should_exit = True
+        await server_task
+
+    response = await lifecycle_client.get(f"/api/v1/security-events?trap_id={created['id']}")
+    assert response.status_code == 200
+    events = response.json()["items"]
+    assert {event["event_type"] for event in events} == {
+        "connection_opened", "authentication_attempt", "command_entered", "connection_closed"
+    }
+    assert any(event["payload"].get("username") == "root" for event in events)
+    assert any(event["payload"].get("command") == "whoami" for event in events)
     _assert_events_visible_in_browser(events)
 
 

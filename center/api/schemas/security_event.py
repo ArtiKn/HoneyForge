@@ -34,6 +34,20 @@ class HttpRequestPayload(BaseModel):
     bytes_received: int = Field(ge=0)
 
 
+class AuthenticationAttemptPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(min_length=1, max_length=256)
+    password: str = Field(max_length=1024)
+    accepted: bool
+
+
+class CommandEnteredPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    command: str = Field(max_length=4096)
+
+
 class SecurityEventSchema(BaseModel):
     """Wire contract shared by agents and the telemetry endpoint."""
 
@@ -68,6 +82,8 @@ class SecurityEventSchema(BaseModel):
     def validate_typed_payload(self) -> "SecurityEventSchema":
         payload_types = {
             "connection_opened": ConnectionOpenedPayload,
+            "authentication_attempt": AuthenticationAttemptPayload,
+            "command_entered": CommandEnteredPayload,
             "http_request": HttpRequestPayload,
             "connection_closed": ConnectionClosedPayload,
         }

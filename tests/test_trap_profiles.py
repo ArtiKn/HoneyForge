@@ -144,6 +144,31 @@ async def test_low_profile_configures_http_and_mysql_independently(profile_clien
     ]
 
 
+async def test_medium_profile_configures_fixed_fake_ssh(profile_client) -> None:
+    response = await profile_client.post(
+        "/api/v1/trap-profiles",
+        headers={"Origin": "https://test"},
+        json={
+            "name": "Interactive fake SSH",
+            "interaction_level": "medium",
+            "services": [
+                {
+                    "protocol": "ssh",
+                    "internal_port": 22,
+                    "emulator_settings": {"shell": "fixed", "max_attempts": 5},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["interaction_level"] == "medium"
+    assert response.json()["services"][0]["emulator_settings"] == {
+        "shell": "fixed",
+        "max_attempts": 5,
+    }
+
+
 async def test_trap_profile_rejects_deployment_and_credential_fields(
     profile_client,
 ) -> None:

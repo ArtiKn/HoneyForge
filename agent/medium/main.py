@@ -5,27 +5,25 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import socket
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 from urllib.error import URLError
 from uuid import UUID, uuid4
 
 import asyncssh
 
 from agent.low.honeyforge_low import AgentClient, EventQueue, JsonLogFormatter
+from agent.low.profile_runtime import (
+    ProfileRuntime,
+    TrapService,
+    report_runtime_health,
+)
 from agent.medium.http_service import HttpAttackSessionRegistry, MediumHttpService
 
 log = logging.getLogger(os.getenv("PROCESS_NAME", "honeyforge-agent"))
-
-
-class _MediumTrapService(Protocol):
-    async def start(self) -> None: ...
-
-    async def stop_accepting(self) -> None: ...
-
-    async def stop(self) -> None: ...
 
 
 @dataclass
@@ -185,8 +183,10 @@ class MediumSshService:
         self.max_input_bytes = max_input_bytes
         self.max_attempts = max_attempts
         self._server: asyncssh.SSHAcceptor | None = None
+        self._prepared_socket: socket.socket | None = None
         self._connections: set[asyncssh.SSHServerConnection] = set()
         self._connection_by_session: dict[str, asyncssh.SSHServerConnection] = {}
+        self._committed = False
 
     @property
     def port(self) -> int:
@@ -195,18 +195,43 @@ class MediumSshService:
         return int(self._server.get_port())
 
     async def start(self) -> None:
+        await self.prepare()
+        await self.start_accepting()
+        self.commit()
+
+    async def prepare(self) -> None:
+        address = socket.getaddrinfo(
+            self.host, self.requested_port, type=socket.SOCK_STREAM,
+            flags=socket.AI_PASSIVE,
+        )[0]
+        prepared_socket = socket.socket(address[0], address[1], address[2])
+        prepared_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        prepared_socket.bind(address[4])
+        prepared_socket.listen(100)
+        prepared_socket.setblocking(False)
+        self._prepared_socket = prepared_socket
+
+    async def start_accepting(self) -> None:
+        if self._prepared_socket is None:
+            raise RuntimeError("Medium SSH Service is not prepared")
         host_key = asyncssh.generate_private_key("ssh-ed25519")
         self._server = await asyncssh.create_server(
             lambda: _FakeSshServer(self),
-            self.host,
-            self.requested_port,
+            sock=self._prepared_socket,
             server_host_keys=[host_key],
             server_version=self.banner,
             login_timeout=self.idle_timeout_seconds,
         )
+        self._prepared_socket = None
+
+    def commit(self) -> None:
+        self._committed = True
 
     async def stop(self) -> None:
         await self.stop_accepting()
+        if self._prepared_socket is not None:
+            self._prepared_socket.close()
+            self._prepared_socket = None
         for connection in tuple(self._connections):
             connection.close()
 
@@ -214,11 +239,14 @@ class MediumSshService:
         if self._server is None:
             return
         self._server.close()
-        await self._server.wait_closed()
         self._server = None
 
+    async def wait_drained(self) -> None:
+        while self._connections:
+            await asyncio.sleep(0.01)
+
     def accept_connection(self, connection: asyncssh.SSHServerConnection) -> bool:
-        if len(self._connections) >= self.connection_limit:
+        if not self._committed or len(self._connections) >= self.connection_limit:
             return False
         self._connections.add(connection)
         return True
@@ -294,19 +322,16 @@ async def run() -> None:
         max_events=int(os.getenv("EVENT_QUEUE_MAX_EVENTS", "100000")),
         max_bytes=int(os.getenv("EVENT_QUEUE_MAX_BYTES", str(256 * 1024 * 1024))),
     )
-    services: list[_MediumTrapService] = []
-    retired_services: list[_MediumTrapService] = []
-    configuration_errors: list[str] = []
     http_sessions = HttpAttackSessionRegistry()
 
     def configured_services(
         config: dict[str, Any]
-    ) -> list[_MediumTrapService]:
+    ) -> list[TrapService]:
         if config["interaction_level"] != "medium":
             raise RuntimeError(
                 "Medium Trap Agent requires a medium-interaction Trap Profile"
             )
-        result: list[_MediumTrapService] = []
+        result: list[TrapService] = []
         for definition in config["services"]:
             if definition["protocol"] not in ("ssh", "http"):
                 raise RuntimeError(
@@ -320,7 +345,7 @@ async def run() -> None:
                 "queue": queue,
             }
             if definition["protocol"] == "ssh":
-                service: _MediumTrapService = MediumSshService(
+                service: TrapService = MediumSshService(
                     **common,
                     banner=definition.get("banner")
                     or "OpenSSH_8.9p1 Ubuntu-3ubuntu0.10",
@@ -336,9 +361,8 @@ async def run() -> None:
         return result
 
     try:
-        services = configured_services(configuration)
-        for service in services:
-            await service.start()
+        runtime = ProfileRuntime(configured_services)
+        await runtime.start(configuration)
         health_interval = float(os.getenv("HEALTH_INTERVAL_SECONDS", "30"))
         profile_interval = float(os.getenv("PROFILE_CHECK_INTERVAL_SECONDS", "30"))
         delivery_interval = float(os.getenv("DELIVERY_INTERVAL_SECONDS", "1"))
@@ -352,38 +376,17 @@ async def run() -> None:
             now = asyncio.get_running_loop().time()
             if now >= next_profile_at:
                 try:
-                    candidate_configuration = await client.fetch_configuration()
-                    if (
-                        candidate_configuration["profile_version"]
-                        != configuration["profile_version"]
-                    ):
-                        candidate_services = configured_services(candidate_configuration)
-                        for service in services:
-                            await service.stop_accepting()
-                        try:
-                            for candidate in candidate_services:
-                                await candidate.start()
-                        except Exception:
-                            for candidate in candidate_services:
-                                await candidate.stop()
-                            for service in services:
-                                await service.start()
-                            raise
-                        retired_services.extend(services)
-                        services = candidate_services
-                        configuration = candidate_configuration
-                    configuration_errors = []
-                except (OSError, URLError, RuntimeError, ValueError) as exc:
-                    configuration_errors = [str(exc)]
+                    await runtime.refresh(client.fetch_configuration)
+                except (OSError, URLError, RuntimeError, ValueError):
                     log.exception("Trap Profile check or apply failed")
                 next_profile_at = now + profile_interval
             if now >= next_health_at:
                 try:
-                    await client.report_health(
+                    await report_runtime_health(
+                        client,
                         queue,
                         agent_version=os.getenv("AGENT_VERSION", "0.1.0"),
-                        active_profile_version=configuration["profile_version"],
-                        configuration_errors=configuration_errors,
+                        runtime=runtime,
                     )
                 except (OSError, URLError, ValueError):
                     log.exception("Agent Health Report delivery failed")
@@ -391,8 +394,7 @@ async def run() -> None:
                     next_health_at = now + health_interval
             await asyncio.sleep(delivery_interval)
     finally:
-        for service in [*services, *retired_services]:
-            await service.stop()
+        await runtime.stop()
         queue.close()
 
 

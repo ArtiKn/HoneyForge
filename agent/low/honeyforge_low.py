@@ -433,6 +433,7 @@ class _LowTcpService:
         self._server: asyncio.Server | None = None
         self._handlers: set[asyncio.Task[None]] = set()
         self._writers: set[asyncio.StreamWriter] = set()
+        self._committed = asyncio.Event()
 
     @property
     def port(self) -> int:
@@ -441,22 +442,42 @@ class _LowTcpService:
         return int(self._server.sockets[0].getsockname()[1])
 
     async def start(self) -> None:
+        await self.prepare()
+        await self.start_accepting()
+        self.commit()
+
+    async def prepare(self) -> None:
         self._server = await asyncio.start_server(
-            self._accept_connection, self.host, self.requested_port
+            self._accept_connection, self.host, self.requested_port,
+            start_serving=False,
         )
 
-    async def stop(self) -> None:
+    async def start_accepting(self) -> None:
         if self._server is None:
-            return
-        self._server.close()
+            raise RuntimeError("Low Trap service is not prepared")
+        await self._server.start_serving()
+
+    def commit(self) -> None:
+        self._committed.set()
+
+    async def stop(self) -> None:
+        await self.stop_accepting()
         for writer in tuple(self._writers):
             writer.close()
         for task in tuple(self._handlers):
             task.cancel()
         if self._handlers:
             await asyncio.gather(*tuple(self._handlers), return_exceptions=True)
-        await self._server.wait_closed()
+
+    async def stop_accepting(self) -> None:
+        if self._server is None:
+            return
+        self._server.close()
         self._server = None
+
+    async def wait_drained(self) -> None:
+        if self._handlers:
+            await asyncio.gather(*tuple(self._handlers), return_exceptions=True)
 
     def _accept_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -473,6 +494,7 @@ class _LowTcpService:
     async def _handle_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
+        await self._committed.wait()
         peer = writer.get_extra_info("peername")
         source_ip = str(peer[0]) if peer else "unknown"
         source_port = int(peer[1]) if peer else 0
@@ -700,6 +722,7 @@ class LowSshAgent:
         self._server: asyncio.Server | None = None
         self._handlers: set[asyncio.Task[None]] = set()
         self._writers: set[asyncio.StreamWriter] = set()
+        self._committed = asyncio.Event()
 
     @property
     def port(self) -> int:
@@ -708,22 +731,42 @@ class LowSshAgent:
         return int(self._server.sockets[0].getsockname()[1])
 
     async def start(self) -> None:
+        await self.prepare()
+        await self.start_accepting()
+        self.commit()
+
+    async def prepare(self) -> None:
         self._server = await asyncio.start_server(
-            self._accept_connection, self.host, self.requested_port
+            self._accept_connection, self.host, self.requested_port,
+            start_serving=False,
         )
 
-    async def stop(self) -> None:
+    async def start_accepting(self) -> None:
         if self._server is None:
-            return
-        self._server.close()
+            raise RuntimeError("Low SSH Service is not prepared")
+        await self._server.start_serving()
+
+    def commit(self) -> None:
+        self._committed.set()
+
+    async def stop(self) -> None:
+        await self.stop_accepting()
         for writer in tuple(self._writers):
             writer.close()
         for task in tuple(self._handlers):
             task.cancel()
         if self._handlers:
             await asyncio.gather(*tuple(self._handlers), return_exceptions=True)
-        await self._server.wait_closed()
+
+    async def stop_accepting(self) -> None:
+        if self._server is None:
+            return
+        self._server.close()
         self._server = None
+
+    async def wait_drained(self) -> None:
+        if self._handlers:
+            await asyncio.gather(*tuple(self._handlers), return_exceptions=True)
 
     def _accept_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -735,6 +778,7 @@ class LowSshAgent:
     async def _handle_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
+        await self._committed.wait()
         if self._active_connections >= self.connection_limit:
             writer.close()
             await writer.wait_closed()

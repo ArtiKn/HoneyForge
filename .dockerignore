@@ -18,6 +18,7 @@ agent/
 !agent/medium/http_service.py
 !agent/low/
 !agent/low/honeyforge_low.py
+!agent/low/profile_runtime.py
 !agent/low/__init__.py
 
 # Docs and tests

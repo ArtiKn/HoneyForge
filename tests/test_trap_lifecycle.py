@@ -26,6 +26,11 @@ from agent.low.honeyforge_low import (
     LowMySqlAgent,
     LowSshAgent,
 )
+from agent.low.profile_runtime import (
+    ProfileApplyError,
+    ProfileRuntime,
+    report_runtime_health,
+)
 from agent.medium.main import MediumSshService
 from agent.medium.http_service import MediumHttpService
 from center.api.config import Settings
@@ -222,6 +227,59 @@ async def test_health_reports_change_operational_state_without_security_events(
     assert event_count == 0
 
 
+async def test_profile_apply_failure_and_recovery_flow_through_agent_health(
+    lifecycle_app, lifecycle_client
+) -> None:
+    created = await precreate_trap(lifecycle_client)
+    secret = await enroll_trap(lifecycle_client, created)
+
+    def build(configuration: dict) -> list:
+        if configuration.get("invalid"):
+            raise ValueError("profile cannot be applied")
+        return []
+
+    class Reporter:
+        async def report_health(
+            self, _queue, *, agent_version, active_profile_version,
+            configuration_errors,
+        ) -> None:
+            response = await lifecycle_client.post(
+                "/assets/v2/health",
+                headers=authorization(secret),
+                json={
+                    "agent_version": agent_version,
+                    "active_profile_version": active_profile_version,
+                    "buffer_depth": 0,
+                    "configuration_errors": configuration_errors,
+                },
+            )
+            assert response.status_code == 204
+
+    runtime = ProfileRuntime(build)
+    await runtime.start({"profile_version": 1})
+
+    async def invalid_configuration() -> dict:
+        return {"profile_version": 2, "invalid": True}
+
+    with pytest.raises(ProfileApplyError):
+        await runtime.refresh(invalid_configuration)
+    await report_runtime_health(Reporter(), object(), runtime, agent_version="1.4.0")
+    async with lifecycle_app.state.database.session_factory() as session:
+        assert (await session.get(Trap, created["id"])).status == "degraded"
+
+    async def recovered_configuration() -> dict:
+        return {"profile_version": 3}
+
+    await runtime.refresh(recovered_configuration)
+    await report_runtime_health(Reporter(), object(), runtime, agent_version="1.4.0")
+    async with lifecycle_app.state.database.session_factory() as session:
+        trap = await session.get(Trap, created["id"])
+        assert trap.status == "online"
+        assert trap.agent_meta["active_profile_version"] == 3
+        assert trap.agent_meta["configuration_errors"] == []
+    await runtime.stop()
+
+
 async def test_control_center_retains_the_latest_buffer_loss_report(
     lifecycle_app, lifecycle_client
 ) -> None:
@@ -317,6 +375,11 @@ async def test_revocation_immediately_rejects_current_and_overlapping_secrets(
     assert revoked.status_code == 200
     assert revoked.json()["status"] == "revoked"
     for secret in (old_secret, new_secret):
+        assert (
+            await lifecycle_client.get(
+                "/assets/v2/config", headers=authorization(secret)
+            )
+        ).status_code == 401
         assert (
             await lifecycle_client.post(
                 "/assets/v2/health",

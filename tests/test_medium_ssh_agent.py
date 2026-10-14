@@ -30,7 +30,7 @@ async def test_medium_ssh_accepts_credentials_and_runs_bounded_fake_shell(tmp_pa
             assert not marker.exists()
             process.stdin.write("exit\n")
             assert "logout" in await process.stdout.read()
-        await _wait_for_events(queue, 5)
+        await _wait_for_events(queue, 6)
     finally:
         await service.stop()
 

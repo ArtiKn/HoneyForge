@@ -88,6 +88,7 @@ class MediumHttpService:
         self._active_connections = 0
         self._handlers: set[asyncio.Task[None]] = set()
         self._writers: set[asyncio.StreamWriter] = set()
+        self._committed = asyncio.Event()
         self._session_registry = session_registry or HttpAttackSessionRegistry(
             session_timeout_seconds
         )
@@ -100,16 +101,33 @@ class MediumHttpService:
         return int(self._server.sockets[0].getsockname()[1])
 
     async def start(self) -> None:
+        await self.prepare()
+        await self.start_accepting()
+        self.commit()
+
+    async def prepare(self) -> None:
         self._server = await asyncio.start_server(
-            self._accept_connection, self.host, self.requested_port
+            self._accept_connection, self.host, self.requested_port,
+            start_serving=False,
         )
+
+    async def start_accepting(self) -> None:
+        if self._server is None:
+            raise RuntimeError("Medium HTTP Service is not prepared")
+        await self._server.start_serving()
+
+    def commit(self) -> None:
+        self._committed.set()
 
     async def stop_accepting(self) -> None:
         if self._server is None:
             return
         self._server.close()
-        await self._server.wait_closed()
         self._server = None
+
+    async def wait_drained(self) -> None:
+        if self._handlers:
+            await asyncio.gather(*tuple(self._handlers), return_exceptions=True)
 
     async def stop(self) -> None:
         await self.stop_accepting()
@@ -135,6 +153,7 @@ class MediumHttpService:
     async def _handle_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
+        await self._committed.wait()
         peer = writer.get_extra_info("peername")
         source_ip, source_port = (str(peer[0]), int(peer[1])) if peer else ("unknown", 0)
         attack_session_id = self._attack_session(source_ip, source_port)

@@ -16,6 +16,14 @@ _Avoid_: Honeypot instance, decoy, Agent
 A reusable configuration describing the deceptive services and behavior assigned to a Trap.
 _Avoid_: Profile, config, honeypot profile
 
+**Active Trap Profile Version**:
+The Trap Profile version whose complete service set currently governs new connections on an Agent. An attempted version does not become active unless the whole set can be activated.
+_Avoid_: Fetched version, desired version, current config
+
+**Last-Known-Good Trap Profile**:
+The most recent Trap Profile version whose complete service set was activated successfully; the Agent retains it when a later version is invalid or cannot be activated.
+_Avoid_: Previous config, fallback profile
+
 **Agent**:
 The process that runs a Trap, records observed activity, buffers telemetry, and communicates with the Control Center.
 _Avoid_: Trap, honeypot

@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+from typing import Any
 from urllib.error import URLError
 from uuid import UUID
 
@@ -17,6 +18,7 @@ from honeyforge_low import (
     LowMySqlAgent,
     LowSshAgent,
 )
+from profile_runtime import ProfileRuntime, TrapService, report_runtime_health
 
 log_handler = logging.StreamHandler()
 log_handler.setFormatter(JsonLogFormatter())
@@ -42,53 +44,68 @@ async def run() -> None:
         max_events=int(os.getenv("EVENT_QUEUE_MAX_EVENTS", "100000")),
         max_bytes=int(os.getenv("EVENT_QUEUE_MAX_BYTES", str(256 * 1024 * 1024))),
     )
-    common = {
-        "trap_id": UUID(configuration["trap_id"]),
-        "host": os.getenv("LISTEN_HOST", "0.0.0.0"),
-        "queue": queue,
-    }
-    agents = []
-    for service in configuration["services"]:
-        protocol = service["protocol"]
-        settings = {
-            **common,
-            "port": int(service["internal_port"]),
-            "banner": service.get("banner"),
-        }
-        if protocol == "ssh":
-            agent = LowSshAgent(
-                **{
-                    **settings,
-                    "banner": service.get("banner")
-                    or "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.10",
-                }
+    def configured_services(config: dict[str, Any]) -> list[TrapService]:
+        if config["interaction_level"] != "low":
+            raise RuntimeError(
+                "Low Trap Agent requires a low-interaction Trap Profile"
             )
-        elif protocol == "http":
-            agent = LowHttpAgent(**settings)
-        elif protocol == "mysql":
-            agent = LowMySqlAgent(**settings)
-        else:
-            raise RuntimeError(f"Unsupported Low service protocol: {protocol}")
-        await agent.start()
-        agents.append(agent)
-        log.info("Low %s Trap service started on port %s", protocol, agent.port)
+        result: list[TrapService] = []
+        common = {
+            "trap_id": UUID(config["trap_id"]),
+            "host": os.getenv("LISTEN_HOST", "0.0.0.0"),
+            "queue": queue,
+        }
+        for definition in config["services"]:
+            protocol = definition["protocol"]
+            settings = {
+                **common,
+                "port": int(definition["internal_port"]),
+                "banner": definition.get("banner"),
+            }
+            if protocol == "ssh":
+                service: TrapService = LowSshAgent(
+                    **{
+                        **settings,
+                        "banner": definition.get("banner")
+                        or "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.10",
+                    }
+                )
+            elif protocol == "http":
+                service = LowHttpAgent(**settings)
+            elif protocol == "mysql":
+                service = LowMySqlAgent(**settings)
+            else:
+                raise RuntimeError(f"Unsupported Low service protocol: {protocol}")
+            result.append(service)
+        return result
+
+    runtime = ProfileRuntime(configured_services)
     health_interval = float(os.getenv("HEALTH_INTERVAL_SECONDS", "30"))
+    profile_interval = float(os.getenv("PROFILE_CHECK_INTERVAL_SECONDS", "30"))
     delivery_interval = float(os.getenv("DELIVERY_INTERVAL_SECONDS", "1"))
     next_health_at = 0.0
+    next_profile_at = asyncio.get_running_loop().time() + profile_interval
     try:
+        await runtime.start(configuration)
         while True:
             try:
                 await client.deliver_pending(queue)
             except (OSError, URLError, ValueError):
                 log.exception("Security Event delivery failed; events remain queued")
             now = asyncio.get_running_loop().time()
+            if now >= next_profile_at:
+                try:
+                    await runtime.refresh(client.fetch_configuration)
+                except (OSError, URLError, RuntimeError, ValueError):
+                    log.exception("Trap Profile check or apply failed")
+                next_profile_at = now + profile_interval
             if now >= next_health_at:
                 try:
-                    await client.report_health(
+                    await report_runtime_health(
+                        client,
                         queue,
                         agent_version=os.getenv("AGENT_VERSION", "0.1.0"),
-                        active_profile_version=configuration["profile_version"],
-                        configuration_errors=[],
+                        runtime=runtime,
                     )
                 except (OSError, URLError, ValueError):
                     log.exception("Agent Health Report delivery failed")
@@ -96,8 +113,7 @@ async def run() -> None:
                     next_health_at = now + health_interval
             await asyncio.sleep(delivery_interval)
     finally:
-        for agent in agents:
-            await agent.stop()
+        await runtime.stop()
         queue.close()
 
 

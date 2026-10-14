@@ -15,6 +15,7 @@ agent/
 !agent/
 !agent/medium/
 !agent/medium/main.py
+!agent/medium/http_service.py
 !agent/low/
 !agent/low/honeyforge_low.py
 !agent/low/__init__.py

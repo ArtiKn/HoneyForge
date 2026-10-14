@@ -88,6 +88,7 @@ services:
       - medium_agent_data:/var/lib/honeyforge
     ports:
       - "${MEDIUM_SSH_PORT:-2223}:${MEDIUM_SSH_INTERNAL_PORT:-22}"
+      - "${MEDIUM_HTTP_PORT:-8081}:${MEDIUM_HTTP_INTERNAL_PORT:-80}"
     deploy:
       resources:
         limits:

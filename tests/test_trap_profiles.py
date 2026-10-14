@@ -169,6 +169,23 @@ async def test_medium_profile_configures_fixed_fake_ssh(profile_client) -> None:
     }
 
 
+async def test_medium_profile_configures_fake_http(profile_client) -> None:
+    response = await profile_client.post(
+        "/api/v1/trap-profiles",
+        headers={"Origin": "https://test"},
+        json={
+            "name": "Interactive fake admin",
+            "interaction_level": "medium",
+            "services": [{"protocol": "http", "internal_port": 80}],
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["services"] == [
+        {"protocol": "http", "internal_port": 80, "emulator_settings": {}}
+    ]
+
+
 async def test_trap_profile_rejects_deployment_and_credential_fields(
     profile_client,
 ) -> None:

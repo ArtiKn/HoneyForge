@@ -63,3 +63,7 @@ _Avoid_: HTTP application, web server
 **Low MySQL Service**:
 A low-interaction Trap service that sends a static MySQL-compatible handshake and records the connection without executing database behavior.
 _Avoid_: MySQL database, SQL server
+
+**Medium HTTP Service**:
+An interactive Trap service that presents a coherent fictitious web application, records requests and authentication attempts, and never reads or changes real application or host data.
+_Avoid_: Admin application, web application, management UI

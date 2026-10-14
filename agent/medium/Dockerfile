@@ -13,6 +13,7 @@ RUN useradd --system --create-home --uid 10011 agent
 RUN pip install --no-cache-dir "asyncssh>=2.20,<3"
 
 COPY agent/medium/main.py ./
+COPY agent/medium/http_service.py ./agent/medium/
 COPY agent/low/honeyforge_low.py agent/low/__init__.py ./agent/low/
 
 RUN chown -R agent:agent /app

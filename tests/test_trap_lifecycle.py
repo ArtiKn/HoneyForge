@@ -27,6 +27,7 @@ from agent.low.honeyforge_low import (
     LowSshAgent,
 )
 from agent.medium.main import MediumSshService
+from agent.medium.http_service import MediumHttpService
 from center.api.config import Settings
 from center.api.main import create_app
 from center.api.models import AttackSession, AuditEntry, SecurityEvent, Trap
@@ -996,6 +997,100 @@ async def test_black_box_medium_fake_ssh_reaches_operator_api(
     }
     assert any(event["payload"].get("username") == "root" for event in events)
     assert any(event["payload"].get("command") == "whoami" for event in events)
+    _assert_events_visible_in_browser(events)
+
+
+async def test_black_box_medium_fake_http_reaches_operator_api(
+    lifecycle_app, lifecycle_client, tmp_path: Path
+) -> None:
+    http_port = _free_port()
+    profile = await lifecycle_client.post(
+        "/api/v1/trap-profiles",
+        headers={"Origin": "https://test"},
+        json={
+            "name": "Black-box Medium HTTP",
+            "interaction_level": "medium",
+            "services": [{"protocol": "http", "internal_port": http_port}],
+        },
+    )
+    assert profile.status_code == 201
+    created_response = await lifecycle_client.post(
+        "/api/v1/traps",
+        headers={"Origin": "https://test"},
+        json={"name": "black-box-medium-http", "trap_profile_id": profile.json()["id"]},
+    )
+    created = created_response.json()
+    secret = await enroll_trap(lifecycle_client, created)
+    certificate, private_key = create_test_certificate(tmp_path, name="center-medium-http")
+    api_port = _free_port()
+    configuration = (
+        await lifecycle_client.get("/assets/v2/config", headers=authorization(secret))
+    ).json()
+    queue = EventQueue(tmp_path / "black-box-medium-http.sqlite3")
+    service = MediumHttpService(
+        trap_id=configuration["trap_id"], host="127.0.0.1",
+        port=configuration["services"][0]["internal_port"], queue=queue,
+        idle_timeout_seconds=1,
+    )
+    await service.start()
+    server = uvicorn.Server(uvicorn.Config(
+        lifecycle_app, host="127.0.0.1", port=api_port,
+        ssl_certfile=str(certificate), ssl_keyfile=str(private_key),
+        lifespan="off", log_level="error",
+    ))
+    server_task = asyncio.create_task(server.serve())
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            await asyncio.sleep(0.01)
+        async with httpx.AsyncClient(
+            base_url=f"http://127.0.0.1:{service.port}", follow_redirects=False
+        ) as fake_admin:
+            marker = tmp_path / "medium-http-host-marker"
+            login = await fake_admin.get("/login")
+            assert login.status_code == 200
+            authenticated = await fake_admin.post(
+                "/login", data={"username": "operator", "password": "probe-secret"}
+            )
+            assert authenticated.status_code == 302
+            admin = await fake_admin.get("/admin")
+            assert admin.status_code == 200
+            assert "System Overview" in admin.text
+            malicious = await fake_admin.post(
+                "/login",
+                data={
+                    "username": "probe",
+                    "password": f"file://{marker}; touch {marker}",
+                },
+            )
+            assert malicious.status_code == 302
+            assert not marker.exists()
+        for _ in range(100):
+            if queue.pending_count() == 14:
+                break
+            await asyncio.sleep(0.01)
+        assert queue.pending_count() == 14
+        client = AgentClient(f"https://127.0.0.1:{api_port}", secret, ca_file=certificate)
+        assert await client.deliver_pending(queue) == 14
+    finally:
+        await service.stop()
+        queue.close()
+        server.should_exit = True
+        await server_task
+
+    response = await lifecycle_client.get(
+        f"/api/v1/security-events?trap_id={created['id']}"
+    )
+    assert response.status_code == 200
+    events = response.json()["items"]
+    assert [event["event_type"] for event in events].count("http_request") == 4
+    assert any(
+        event["event_type"] == "authentication_attempt"
+        and event["payload"]["username"] == "operator"
+        for event in events
+    )
+    assert len({event["attack_session_id"] for event in events}) == 1
     _assert_events_visible_in_browser(events)
 
 

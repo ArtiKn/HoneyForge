@@ -1,4 +1,4 @@
-"""Medium-interaction fake SSH Trap service."""
+"""Run the configured Medium-interaction Trap services."""
 
 from __future__ import annotations
 
@@ -8,15 +8,24 @@ import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from urllib.error import URLError
 from uuid import UUID, uuid4
 
 import asyncssh
 
 from agent.low.honeyforge_low import AgentClient, EventQueue, JsonLogFormatter
+from agent.medium.http_service import HttpAttackSessionRegistry, MediumHttpService
 
 log = logging.getLogger(os.getenv("PROCESS_NAME", "honeyforge-agent"))
+
+
+class _MediumTrapService(Protocol):
+    async def start(self) -> None: ...
+
+    async def stop_accepting(self) -> None: ...
+
+    async def stop(self) -> None: ...
 
 
 @dataclass
@@ -285,33 +294,45 @@ async def run() -> None:
         max_events=int(os.getenv("EVENT_QUEUE_MAX_EVENTS", "100000")),
         max_bytes=int(os.getenv("EVENT_QUEUE_MAX_BYTES", str(256 * 1024 * 1024))),
     )
-    services: list[MediumSshService] = []
-    retired_services: list[MediumSshService] = []
+    services: list[_MediumTrapService] = []
+    retired_services: list[_MediumTrapService] = []
     configuration_errors: list[str] = []
+    http_sessions = HttpAttackSessionRegistry()
 
-    def configured_services(config: dict[str, Any]) -> list[MediumSshService]:
+    def configured_services(
+        config: dict[str, Any]
+    ) -> list[_MediumTrapService]:
         if config["interaction_level"] != "medium":
             raise RuntimeError(
                 "Medium Trap Agent requires a medium-interaction Trap Profile"
             )
-        result: list[MediumSshService] = []
+        result: list[_MediumTrapService] = []
         for definition in config["services"]:
-            if definition["protocol"] != "ssh":
+            if definition["protocol"] not in ("ssh", "http"):
                 raise RuntimeError(
                     f"Unsupported Medium service protocol: {definition['protocol']}"
                 )
             settings = definition.get("emulator_settings", {})
-            result.append(
-                MediumSshService(
-                    trap_id=UUID(config["trap_id"]),
-                    host=os.getenv("LISTEN_HOST", "0.0.0.0"),
-                    port=int(definition["internal_port"]),
-                    queue=queue,
+            common = {
+                "trap_id": UUID(config["trap_id"]),
+                "host": os.getenv("LISTEN_HOST", "0.0.0.0"),
+                "port": int(definition["internal_port"]),
+                "queue": queue,
+            }
+            if definition["protocol"] == "ssh":
+                service: _MediumTrapService = MediumSshService(
+                    **common,
                     banner=definition.get("banner")
                     or "OpenSSH_8.9p1 Ubuntu-3ubuntu0.10",
                     max_attempts=int(settings.get("max_attempts") or 3),
                 )
-            )
+            else:
+                service = MediumHttpService(
+                    **common,
+                    banner=definition.get("banner") or "nginx/1.24.0",
+                    session_registry=http_sessions,
+                )
+            result.append(service)
         return result
 
     try:

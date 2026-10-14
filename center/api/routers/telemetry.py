@@ -4,8 +4,8 @@ from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import ValidationError
 
 from center.api.schemas.telemetry import TelemetryBatch
+from center.api.event_ingestion import SecurityEventIngestor
 from center.api.trap_access import TrapAccess
-from center.collector.ingest import ingest
 
 router = APIRouter()
 TELEMETRY_SCHEMA = TelemetryBatch.model_json_schema()
@@ -32,7 +32,7 @@ async def ping() -> dict[str, str]:
 async def receive_telemetry(
     request: Request,
     authorization: Annotated[str | None, Header()] = None,
-) -> dict[str, bool]:
+) -> dict[str, list[str]]:
     """Accept JSON hidden behind the CDN-like content type used by agents."""
 
     try:
@@ -54,8 +54,8 @@ async def receive_telemetry(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Telemetry batch contains an event for another Trap",
             )
-        ingest(batch.events)
+        accepted = await SecurityEventIngestor(session).ingest(trap, batch.events)
         await session.commit()
-    return {"ok": True}
+    return {"accepted": [str(event_id) for event_id in accepted]}
 
 

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HoneyForge · Security Events</title>
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">HoneyForge</a>
+    <nav aria-label="Control Center">
+      <a href="/events.html" aria-current="page">Security Events</a>
+      <a href="/profiles.html">Trap Profiles</a>
+    </nav>
+  </header>
+  <main class="events-shell">
+    <header class="events-heading reveal">
+      <p class="eyebrow">Observed activity</p>
+      <h1>Security Events</h1>
+      <p>Durable observations reported by deployed Traps.</p>
+    </header>
+    <ol class="event-stream" id="event-stream" aria-live="polite"></ol>
+    <p class="empty-events" id="empty-events">No Security Events received.</p>
+  </main>
+  <script src="/events.js" defer></script>
+</body>
+</html>

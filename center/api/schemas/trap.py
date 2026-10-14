@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from center.api.schemas.trap_profile import TrapServiceDefinition
+
 
 class TrapCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
@@ -47,4 +49,11 @@ class AgentHealthReport(BaseModel):
 
 class RotationResponse(BaseModel):
     trap_secret: str
+
+
+class AgentConfiguration(BaseModel):
+    trap_id: UUID
+    profile_version: int
+    interaction_level: Literal["low", "medium"]
+    services: list[TrapServiceDefinition]
 

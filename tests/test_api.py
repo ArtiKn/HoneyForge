@@ -52,7 +52,7 @@ async def test_masked_telemetry_endpoint_accepts_javascript_content_type(
                 "source_port": 4242,
                 "target_service": "ssh",
                 "target_port": 22,
-                "payload": {},
+                "payload": {"banner": "SSH-2.0-OpenSSH_8.9p1"},
             }
         ]
     }

@@ -6,13 +6,35 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from center.api.database import get_db
 from center.api.schemas.trap import (
     AgentHealthReport,
+    AgentConfiguration,
     EnrollmentRequest,
     EnrollmentResponse,
     RotationResponse,
 )
 from center.api.trap_access import TrapAccess
+from center.api.models import TrapProfile
 
 router = APIRouter(prefix="/assets/v2", tags=["agent"])
+
+
+@router.get("/config", response_model=AgentConfiguration)
+async def configuration(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    authorization: Annotated[str | None, Header()] = None,
+) -> AgentConfiguration:
+    trap = await _access(request, session).authenticate(_bearer(authorization))
+    if trap is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+    profile = await session.get(TrapProfile, trap.trap_profile_id)
+    if profile is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT)
+    return AgentConfiguration(
+        trap_id=trap.id,
+        profile_version=profile.version,
+        interaction_level=profile.interaction_level,
+        services=profile.services,
+    )
 
 
 @router.post("/enroll", response_model=EnrollmentResponse)

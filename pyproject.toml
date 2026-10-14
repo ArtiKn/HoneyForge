@@ -24,9 +24,10 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["center*"]
+include = ["agent*", "center*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+pythonpath = ["."]
 

@@ -1,16 +1,25 @@
+import asyncio
+import json
 import os
+import shutil
+import socket
 import subprocess
 import sys
+import threading
 from datetime import UTC, datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 import pytest
+import uvicorn
 from sqlalchemy import func, select
 
+from agent.low.honeyforge_low import AgentClient, EventQueue, LowSshAgent
 from center.api.config import Settings
 from center.api.main import create_app
-from center.api.models import AuditEntry, SecurityEvent, Trap
+from center.api.models import AttackSession, AuditEntry, SecurityEvent, Trap
 
 
 pytestmark = pytest.mark.asyncio
@@ -66,12 +75,14 @@ async def lifecycle_client(lifecycle_app):
         yield client
 
 
-async def create_profile(client: httpx.AsyncClient) -> str:
+async def create_profile(
+    client: httpx.AsyncClient, name: str = "Lifecycle profile"
+) -> str:
     response = await client.post(
         "/api/v1/trap-profiles",
         headers={"Origin": "https://test"},
         json={
-            "name": "Lifecycle profile",
+            "name": name,
             "interaction_level": "medium",
             "services": [{"protocol": "ssh", "internal_port": 22}],
         },
@@ -80,12 +91,14 @@ async def create_profile(client: httpx.AsyncClient) -> str:
     return response.json()["id"]
 
 
-async def precreate_trap(client: httpx.AsyncClient) -> dict:
-    profile_id = await create_profile(client)
+async def precreate_trap(
+    client: httpx.AsyncClient, *, name: str = "edge-01", profile_name: str = "Lifecycle profile"
+) -> dict:
+    profile_id = await create_profile(client, profile_name)
     response = await client.post(
         "/api/v1/traps",
         headers={"Origin": "https://test"},
-        json={"name": "edge-01", "trap_profile_id": profile_id, "region": "dmz"},
+        json={"name": name, "trap_profile_id": profile_id, "region": "dmz"},
     )
     assert response.status_code == 201
     return response.json()
@@ -319,3 +332,472 @@ async def test_masked_agent_channel_exposes_lifecycle_endpoints() -> None:
 
     assert "location /assets/v2/" in nginx
     assert "proxy_pass http://api:8000/assets/v2/;" in nginx
+
+
+async def test_authenticated_agent_persists_and_deduplicates_ssh_interaction(
+    lifecycle_app, lifecycle_client
+) -> None:
+    created = await precreate_trap(lifecycle_client)
+    secret = await enroll_trap(lifecycle_client, created)
+    attack_session_id = str(uuid4())
+    opened_id = str(uuid4())
+    closed_id = str(uuid4())
+    events = [
+        {
+            "id": opened_id,
+            "schema_version": 1,
+            "trap_id": created["id"],
+            "attack_session_id": attack_session_id,
+            "event_type": "connection_opened",
+            "observed_at": "2026-10-14T12:00:00Z",
+            "source_ip": "192.0.2.44",
+            "source_port": 54321,
+            "target_service": "ssh",
+            "target_port": 2222,
+            "payload": {"banner": "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.10"},
+        },
+        {
+            "id": closed_id,
+            "schema_version": 1,
+            "trap_id": created["id"],
+            "attack_session_id": attack_session_id,
+            "event_type": "connection_closed",
+            "observed_at": "2026-10-14T12:00:01Z",
+            "source_ip": "192.0.2.44",
+            "source_port": 54321,
+            "target_service": "ssh",
+            "target_port": 2222,
+            "payload": {"bytes_sent": 42},
+        },
+    ]
+
+    first = await lifecycle_client.post(
+        "/assets/v2/init",
+        headers={**authorization(secret), "Content-Type": "application/javascript"},
+        json={"events": events},
+    )
+    duplicate = await lifecycle_client.post(
+        "/assets/v2/init",
+        headers={**authorization(secret), "Content-Type": "application/javascript"},
+        json={"events": events},
+    )
+    first_page = await lifecycle_client.get(
+        f"/api/v1/security-events?trap_id={created['id']}&limit=1"
+    )
+    second_page = await lifecycle_client.get(
+        "/api/v1/security-events",
+        params={
+            "trap_id": created["id"],
+            "limit": 1,
+            "cursor": first_page.json()["next_cursor"],
+        },
+    )
+    listed_events = first_page.json()["items"] + second_page.json()["items"]
+
+    assert first.status_code == 200
+    assert first.json() == {"accepted": [opened_id, closed_id]}
+    assert duplicate.status_code == 200
+    assert duplicate.json() == {"accepted": [opened_id, closed_id]}
+    assert first_page.status_code == 200
+    assert second_page.status_code == 200
+    assert second_page.json()["next_cursor"] is None
+    assert {event["event_type"] for event in listed_events} == {
+        "connection_opened",
+        "connection_closed",
+    }
+    assert {event["attack_session_id"] for event in listed_events} == {
+        attack_session_id
+    }
+
+    async with lifecycle_app.state.database.session_factory() as session:
+        event_count = await session.scalar(
+            select(func.count()).select_from(SecurityEvent)
+        )
+        session_count = await session.scalar(
+            select(func.count()).select_from(AttackSession)
+        )
+    assert event_count == 2
+    assert session_count == 1
+
+
+async def test_enrolled_agent_reads_its_assigned_trap_profile(
+    lifecycle_client,
+) -> None:
+    created = await precreate_trap(lifecycle_client)
+    secret = await enroll_trap(lifecycle_client, created)
+
+    response = await lifecycle_client.get(
+        "/assets/v2/config", headers=authorization(secret)
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "trap_id": created["id"],
+        "profile_version": 1,
+        "interaction_level": "medium",
+        "services": [
+            {
+                "protocol": "ssh",
+                "internal_port": 22,
+                "banner": None,
+                "emulator_settings": {
+                    "shell": None,
+                    "max_attempts": None,
+                    "response_delay_ms": None,
+                },
+            }
+        ],
+    }
+
+
+async def test_agent_cannot_attach_events_to_another_traps_attack_session(
+    lifecycle_client,
+) -> None:
+    first = await precreate_trap(lifecycle_client)
+    first_secret = await enroll_trap(lifecycle_client, first)
+    second = await precreate_trap(
+        lifecycle_client, name="edge-02", profile_name="Second lifecycle profile"
+    )
+    second_secret = await enroll_trap(lifecycle_client, second)
+    attack_session_id = str(uuid4())
+
+    def event(trap_id: str, event_id: str) -> dict:
+        return {
+            "id": event_id,
+            "schema_version": 1,
+            "trap_id": trap_id,
+            "attack_session_id": attack_session_id,
+            "event_type": "connection_opened",
+            "observed_at": "2026-10-14T12:00:00Z",
+            "source_ip": "192.0.2.44",
+            "source_port": 54321,
+            "target_service": "ssh",
+            "target_port": 22,
+            "payload": {"banner": "SSH-2.0-test"},
+        }
+
+    accepted = await lifecycle_client.post(
+        "/assets/v2/init",
+        headers=authorization(first_secret),
+        json={"events": [event(first["id"], str(uuid4()))]},
+    )
+    rejected = await lifecycle_client.post(
+        "/assets/v2/init",
+        headers=authorization(second_secret),
+        json={"events": [event(second["id"], str(uuid4()))]},
+    )
+
+    assert accepted.status_code == 200
+    assert rejected.status_code == 422
+
+
+async def test_duplicate_event_uuid_cannot_mutate_or_create_an_attack_session(
+    lifecycle_app, lifecycle_client
+) -> None:
+    created = await precreate_trap(lifecycle_client)
+    secret = await enroll_trap(lifecycle_client, created)
+    event_id = str(uuid4())
+    original_session_id = str(uuid4())
+    conflicting_session_id = str(uuid4())
+
+    def event(session_id: str, observed_at: str) -> dict:
+        return {
+            "id": event_id,
+            "schema_version": 1,
+            "trap_id": created["id"],
+            "attack_session_id": session_id,
+            "event_type": "connection_closed",
+            "observed_at": observed_at,
+            "source_ip": "192.0.2.44",
+            "source_port": 54321,
+            "target_service": "ssh",
+            "target_port": 22,
+            "payload": {"bytes_sent": 4},
+        }
+
+    first = await lifecycle_client.post(
+        "/assets/v2/init",
+        headers=authorization(secret),
+        json={"events": [event(original_session_id, "2026-10-14T12:00:00Z")]},
+    )
+    collision = await lifecycle_client.post(
+        "/assets/v2/init",
+        headers=authorization(secret),
+        json={"events": [event(conflicting_session_id, "2026-10-14T13:00:00Z")]},
+    )
+
+    assert first.status_code == 200
+    assert collision.status_code == 422
+    async with lifecycle_app.state.database.session_factory() as session:
+        sessions = list(await session.scalars(select(AttackSession)))
+    assert len(sessions) == 1
+    assert str(sessions[0].id) == original_session_id
+    assert sessions[0].ended_at.isoformat() == "2026-10-14T12:00:00+00:00"
+
+
+async def test_reversed_concurrent_batches_are_ingested_without_deadlock(
+    lifecycle_app, lifecycle_client
+) -> None:
+    created = await precreate_trap(lifecycle_client)
+    secret = await enroll_trap(lifecycle_client, created)
+
+    def event(event_id: str, session_id: str, source_port: int) -> dict:
+        return {
+            "id": event_id,
+            "schema_version": 1,
+            "trap_id": created["id"],
+            "attack_session_id": session_id,
+            "event_type": "connection_opened",
+            "observed_at": "2026-10-14T12:00:00Z",
+            "source_ip": "192.0.2.44",
+            "source_port": source_port,
+            "target_service": "ssh",
+            "target_port": 22,
+            "payload": {"banner": "SSH-2.0-test"},
+        }
+
+    events = [
+        event(str(uuid4()), str(uuid4()), 54321),
+        event(str(uuid4()), str(uuid4()), 54322),
+    ]
+    responses = await asyncio.wait_for(
+        asyncio.gather(
+            lifecycle_client.post(
+                "/assets/v2/init",
+                headers=authorization(secret),
+                json={"events": events},
+            ),
+            lifecycle_client.post(
+                "/assets/v2/init",
+                headers=authorization(secret),
+                json={"events": list(reversed(events))},
+            ),
+        ),
+        timeout=5,
+    )
+
+    assert [response.status_code for response in responses] == [200, 200]
+    async with lifecycle_app.state.database.session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(SecurityEvent)) == 2
+        assert await session.scalar(select(func.count()).select_from(AttackSession)) == 2
+
+
+async def test_black_box_low_ssh_interaction_reaches_operator_api(
+    lifecycle_app, lifecycle_client, tmp_path: Path
+) -> None:
+    ssh_port = _free_port()
+    profile = await lifecycle_client.post(
+        "/api/v1/trap-profiles",
+        headers={"Origin": "https://test"},
+        json={
+            "name": "Black-box Low SSH",
+            "interaction_level": "low",
+            "services": [
+                {
+                    "protocol": "ssh",
+                    "internal_port": ssh_port,
+                    "banner": "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.10",
+                }
+            ],
+        },
+    )
+    created_response = await lifecycle_client.post(
+        "/api/v1/traps",
+        headers={"Origin": "https://test"},
+        json={"name": "black-box-ssh", "trap_profile_id": profile.json()["id"]},
+    )
+    created = created_response.json()
+    secret = await enroll_trap(lifecycle_client, created)
+
+    older_events = [
+        {
+            "id": str(uuid4()),
+            "schema_version": 1,
+            "trap_id": created["id"],
+            "attack_session_id": str(uuid4()),
+            "event_type": "connection_opened",
+            "observed_at": "2026-10-14T10:00:00Z",
+            "source_ip": "192.0.2.10",
+            "source_port": 40000 + index,
+            "target_service": "ssh",
+            "target_port": ssh_port,
+            "payload": {"banner": "SSH-2.0-older"},
+        }
+        for index in range(100)
+    ]
+    seeded = await lifecycle_client.post(
+        "/assets/v2/init",
+        headers=authorization(secret),
+        json={"events": older_events},
+    )
+    assert seeded.status_code == 200
+
+    certificate = tmp_path / "center.crt"
+    private_key = tmp_path / "center.key"
+    _create_test_certificate(certificate, private_key)
+    api_port = _free_port()
+    server = uvicorn.Server(
+        uvicorn.Config(
+            lifecycle_app,
+            host="127.0.0.1",
+            port=api_port,
+            ssl_certfile=str(certificate),
+            ssl_keyfile=str(private_key),
+            lifespan="off",
+            log_level="error",
+        )
+    )
+    server_task = asyncio.create_task(server.serve())
+    for _ in range(100):
+        if server.started:
+            break
+        await asyncio.sleep(0.01)
+    else:
+        raise AssertionError("test API did not start")
+
+    queue = EventQueue(tmp_path / "black-box.sqlite3")
+    client = AgentClient(
+        f"https://127.0.0.1:{api_port}", secret, ca_file=certificate
+    )
+    configuration = await client.fetch_configuration()
+    service = configuration["services"][0]
+    agent = LowSshAgent(
+        trap_id=configuration["trap_id"],
+        host="127.0.0.1",
+        port=service["internal_port"],
+        banner=service["banner"],
+        queue=queue,
+        idle_timeout_seconds=1,
+    )
+    await agent.start()
+    try:
+        ssh = await asyncio.create_subprocess_exec(
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=2",
+            "-p",
+            str(ssh_port),
+            "nobody@127.0.0.1",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.wait_for(ssh.communicate(), timeout=5)
+        assert ssh.returncode != 0
+        for _ in range(100):
+            if queue.pending_count() == 2:
+                break
+            await asyncio.sleep(0.01)
+        assert await client.deliver_pending(queue) == 2
+    finally:
+        await agent.stop()
+        queue.close()
+        server.should_exit = True
+        await server_task
+
+    response = await lifecycle_client.get(
+        f"/api/v1/security-events?trap_id={created['id']}"
+    )
+    assert response.status_code == 200
+    visible_events = [
+        event
+        for event in response.json()["items"]
+        if event["payload"].get("banner") != "SSH-2.0-older"
+    ]
+    assert {event["event_type"] for event in visible_events} == {
+        "connection_opened",
+        "connection_closed",
+    }
+    assert len({event["attack_session_id"] for event in visible_events}) == 1
+    _assert_events_visible_in_browser(response.json()["items"])
+
+
+def _free_port() -> int:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
+def _create_test_certificate(certificate: Path, private_key: Path) -> None:
+    subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-days",
+            "1",
+            "-keyout",
+            str(private_key),
+            "-out",
+            str(certificate),
+            "-subj",
+            "/CN=127.0.0.1",
+            "-addext",
+            "subjectAltName=IP:127.0.0.1",
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
+def _assert_events_visible_in_browser(events: list[dict]) -> None:
+    chrome = shutil.which("google-chrome") or shutil.which("chromium")
+    if chrome is None:
+        pytest.skip("Chrome or Chromium is required for the black-box UI check")
+    web_root = Path(__file__).parent.parent / "center" / "web"
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path == "/api/v1/security-events":
+                body = json.dumps({"items": events, "next_cursor": None}).encode()
+                content_type = "application/json"
+            else:
+                file_path = web_root / (self.path.lstrip("/") or "events.html")
+                if not file_path.is_file():
+                    self.send_error(404)
+                    return
+                body = file_path.read_bytes()
+                content_type = {
+                    ".html": "text/html",
+                    ".css": "text/css",
+                    ".js": "text/javascript",
+                }.get(file_path.suffix, "application/octet-stream")
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        rendered = subprocess.run(
+            [
+                chrome,
+                "--headless=new",
+                "--no-sandbox",
+                "--disable-gpu",
+                "--disable-dev-shm-usage",
+                "--virtual-time-budget=2000",
+                "--dump-dom",
+                f"http://127.0.0.1:{server.server_port}/events.html",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+    assert "Connection opened" in rendered.stdout
+    assert "Connection closed" in rendered.stdout

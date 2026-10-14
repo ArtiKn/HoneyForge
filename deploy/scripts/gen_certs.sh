@@ -10,8 +10,8 @@ CERT_FILE="${CERT_DIR}/center.crt"
 KEY_FILE="${CERT_DIR}/center.key"
 
 DAYS="${CERT_DAYS:-365}"
-SUBJECT="${CERT_SUBJECT:-/CN=localhost}"
-SAN="${CERT_SAN:-DNS:localhost,IP:127.0.0.1}"
+SUBJECT="${CERT_SUBJECT:-/CN=assets.cdn-static.example}"
+SAN="${CERT_SAN:-DNS:localhost,DNS:assets.cdn-static.example,IP:127.0.0.1}"
 
 FORCE=0
 for arg in "$@"; do

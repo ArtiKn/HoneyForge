@@ -8,9 +8,10 @@ WORKDIR /app
 
 RUN useradd --system --create-home --uid 10010 agent
 
-COPY main.py ./
+COPY honeyforge_low.py main.py ./
 
-RUN chown -R agent:agent /app
+RUN install -d -o agent -g agent /var/lib/honeyforge \
+    && chown -R agent:agent /app
 USER agent
 
 CMD ["python", "main.py"]

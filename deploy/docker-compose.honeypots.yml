@@ -30,14 +30,22 @@ services:
     container_name: hf-agent-low
     environment:
       CENTER_URL: ${AGENT_CENTER_URL:-https://assets.cdn-static.example}
-      AGENT_TOKEN: ${AGENT_TOKEN:-change-me}
+      TRAP_SECRET_FILE: /run/secrets/trap_secret
+      CENTER_CA_FILE: /etc/honeyforge/center-ca.crt
+      EVENT_QUEUE_PATH: /var/lib/honeyforge/events.sqlite3
       HONEYPOT_ID: ${HONEYPOT_ID_LOW:-low-01}
       HONEYPOT_LEVEL: low
       TELEMETRY_PATH: ${TELEMETRY_PATH:-/assets/v2/init}
       BEACON_INTERVAL_SECONDS: ${BEACON_INTERVAL_SECONDS:-60}
       BEACON_JITTER_SECONDS: ${BEACON_JITTER_SECONDS:-30}
       PROCESS_NAME: ${PROCESS_NAME:-syslog-relay}
-      VERIFY_TLS: ${VERIFY_TLS:-0}
+    secrets:
+      - low_trap_secret
+    volumes:
+      - ./nginx/certs/center.crt:/etc/honeyforge/center-ca.crt:ro
+      - agent_low_data:/var/lib/honeyforge
+    ports:
+      - "${LOW_SSH_PORT:-2222}:${LOW_SSH_INTERNAL_PORT:-22}"
     extra_hosts:
       - "assets.cdn-static.example:host-gateway"
     deploy:
@@ -74,3 +82,10 @@ networks:
   dmz_net:
     name: honeyforge_dmz_net
     driver: bridge
+
+volumes:
+  agent_low_data:
+
+secrets:
+  low_trap_secret:
+    file: ${LOW_TRAP_SECRET_FILE:-./secrets/low_trap_secret}

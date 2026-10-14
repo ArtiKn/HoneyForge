@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Trap Profiles · HoneyForge</title>
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">HoneyForge</a>
+    <nav aria-label="Control Center">
+      <a href="/">Dashboard</a>
+      <span class="operator" id="operator">Operator</span>
+      <button class="button quiet" id="logout" type="button">Log out</button>
+    </nav>
+  </header>
+  <main class="profiles-shell">
+    <section class="profile-index" aria-labelledby="profiles-heading">
+      <div class="index-head reveal">
+        <h1 id="profiles-heading">Trap Profiles</h1>
+        <button class="button" id="new-profile" type="button">New</button>
+      </div>
+      <div class="profile-list" id="profile-list" aria-live="polite">
+        <p class="empty">Loading Trap Profiles…</p>
+      </div>
+    </section>
+
+    <section class="profile-editor" aria-labelledby="editor-title">
+      <div class="editor-heading reveal">
+        <h2 id="editor-title">New Trap Profile</h2>
+        <span class="version" id="version-label">Not saved</span>
+      </div>
+      <form class="profile-form" id="profile-form">
+        <label class="field reveal">
+          <span>Name</span>
+          <input name="name" maxlength="128" required autocomplete="off" />
+        </label>
+        <label class="field reveal">
+          <span>Interaction level</span>
+          <select name="interaction_level">
+            <option value="low">Low · static responses</option>
+            <option value="medium">Medium · fixed emulation</option>
+          </select>
+        </label>
+        <div class="services reveal">
+          <div class="service-head">
+            <span class="service-title">Service definitions</span>
+            <button class="button secondary" id="add-service" type="button">Add service</button>
+          </div>
+          <div id="services"></div>
+        </div>
+        <p class="notice reveal" id="notice" role="status"></p>
+        <div class="form-actions reveal">
+          <button class="button" type="submit">Save Trap Profile</button>
+          <button class="button danger" id="remove-profile" type="button" hidden>Delete or archive</button>
+        </div>
+      </form>
+    </section>
+  </main>
+  <template id="service-template">
+    <div class="service-row">
+      <label class="field"><span>Protocol</span><select name="protocol"><option>ssh</option><option>http</option><option>mysql</option></select></label>
+      <label class="field"><span>Internal port</span><input name="internal_port" type="number" min="1" max="65535" required /></label>
+      <label class="field banner-field"><span>Banner (optional)</span><input name="banner" maxlength="1024" autocomplete="off" /></label>
+      <label class="field settings-field"><span>Emulator settings (JSON)</span><textarea name="emulator_settings" spellcheck="false">{}</textarea></label>
+      <button class="button quiet remove-service" type="button">Remove</button>
+    </div>
+  </template>
+  <script type="module" src="/profiles.js"></script>
+</body>
+</html>

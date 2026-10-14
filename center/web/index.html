@@ -3,17 +3,23 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>HoneyForge</title>
-  <style>
-    body { margin: 2rem; font-family: system-ui, sans-serif; background: #0f1720; color: #e6edf3; }
-    code { background: #16202b; padding: .1rem .35rem; border-radius: 4px; }
-  </style>
+  <title>HoneyForge · Control Center</title>
+  <link rel="stylesheet" href="/app.css" />
 </head>
 <body>
-  <h1>HoneyForge</h1>
-  <p>Authenticated Control Center dashboard.</p>
-  <p id="operator">Operator: checking…</p>
-  <button id="logout" type="button">Log out</button>
+  <header class="topbar">
+    <a class="brand" href="/">HoneyForge</a>
+    <nav aria-label="Control Center">
+      <a href="/profiles.html">Trap Profiles</a>
+      <span class="operator" id="operator">Checking Operator…</span>
+      <button class="button quiet" id="logout" type="button">Log out</button>
+    </nav>
+  </header>
+  <main class="dashboard">
+    <h1 class="reveal">Shape the trap before it meets the network.</h1>
+    <p class="lead reveal">Define reusable service behavior once, version every change, and keep the history needed to understand what each Trap presented.</p>
+    <a class="button primary-link reveal" href="/profiles.html">Manage Trap Profiles</a>
+  </main>
   <script>
     fetch('/api/v1/dashboard', { credentials: 'same-origin' })
       .then(r => {

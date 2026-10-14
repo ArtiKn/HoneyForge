@@ -46,6 +46,17 @@ class Settings(BaseSettings):
     health_sweep_interval_seconds: int = Field(
         default=30, validation_alias="HEALTH_SWEEP_INTERVAL_SECONDS", gt=0
     )
+    security_data_retention_days: int = Field(
+        default=30, validation_alias="SECURITY_DATA_RETENTION_DAYS", gt=0
+    )
+    audit_entry_retention_days: int = Field(
+        default=365, validation_alias="AUDIT_ENTRY_RETENTION_DAYS", gt=0
+    )
+    retention_sweep_interval_seconds: int = Field(
+        default=86_400,
+        validation_alias="RETENTION_SWEEP_INTERVAL_SECONDS",
+        gt=0,
+    )
 
 
 @lru_cache

@@ -63,9 +63,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .events-heading .eyebrow { grid-column: 1 / -1; }
 .events-heading h1 { margin: 0; font-size: clamp(3rem, 7vw, 7rem); font-weight: 540; letter-spacing: -.06em; line-height: .9; }
 .events-heading > p:last-child { margin: 0; max-width: 28ch; color: var(--muted); }
+.event-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; padding: 1.5rem 0; border-bottom: 1px solid #aab8b1; }
+.event-filters label { display: grid; gap: .35rem; color: var(--muted); font-size: var(--small); font-weight: 720; }
+.filter-actions { display: flex; align-items: end; gap: .75rem; }
 .event-stream { margin: 0; padding: 0; list-style: none; }
 .security-event { display: grid; grid-template-columns: 11rem 1.2fr 1fr 1.5fr; gap: 1rem; padding: 1.15rem 0; border-bottom: 1px solid #bcc8c1; align-items: baseline; }
 .security-event time, .security-event span { color: var(--muted); font-size: var(--small); }
+.event-times { display: grid; gap: .3rem; }
+.event-times > span { display: grid; }
+.event-time-label { color: var(--ink) !important; font-size: .68rem !important; font-weight: 760; letter-spacing: .08em; text-transform: uppercase; }
 .security-event code { overflow-wrap: anywhere; color: var(--ink); font-family: "SFMono-Regular", Consolas, monospace; font-size: .8rem; }
 .empty-events { padding: 3rem 0; color: var(--muted); }
 
@@ -122,6 +128,7 @@ textarea { min-height: 5.5rem; resize: vertical; }
   .status-card { min-height: 7rem; border-top: 1px solid #aab8b1; }
   .events-heading { display: block; }
   .events-heading > p:last-child { margin-top: 1rem; }
+  .event-filters { grid-template-columns: 1fr; }
   .security-event { grid-template-columns: 1fr; gap: .35rem; }
   .profiles-shell { display: block; }
   .profile-index { min-height: 17rem; padding-bottom: 2rem; }

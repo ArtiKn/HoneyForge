@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from center.api.models import AttackSession, Base, SecurityEvent, Trap, TrapProfile
+from center.api.config import Settings
 from center.api.schemas.telemetry import TelemetryBatch
 from center.collector.ingest import ingest
 from center.collector.normalizer import normalize
@@ -19,6 +20,14 @@ def test_all_documented_tables_are_registered() -> None:
         "audit_entries",
     }
     assert SecurityEvent and Trap and TrapProfile and AttackSession
+
+
+def test_retention_defaults_keep_security_for_30_days_and_audit_for_365() -> None:
+    settings = Settings()
+
+    assert settings.security_data_retention_days == 30
+    assert settings.audit_entry_retention_days == 365
+    assert settings.retention_sweep_interval_seconds == 86_400
 
 
 def test_empty_batch_contract() -> None:

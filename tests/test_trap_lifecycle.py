@@ -525,6 +525,262 @@ async def test_authenticated_agent_persists_and_deduplicates_ssh_interaction(
     assert session_count == 1
 
 
+async def test_security_event_query_combines_filters_and_ignores_agent_clock_skew(
+    lifecycle_client,
+) -> None:
+    first_trap = await precreate_trap(lifecycle_client)
+    first_secret = await enroll_trap(lifecycle_client, first_trap)
+    second_trap = await precreate_trap(
+        lifecycle_client,
+        name="edge-02",
+        profile_name="Second query profile",
+    )
+    second_secret = await enroll_trap(lifecycle_client, second_trap)
+    matching_session = str(uuid4())
+
+    def event(
+        *,
+        event_id: str,
+        trap_id: str,
+        attack_session_id: str,
+        event_type: str,
+        observed_at: str,
+        source_ip: str,
+    ) -> dict:
+        payload = (
+            {
+                "method": "GET",
+                "path": "/admin",
+                "http_version": "HTTP/1.1",
+                "bytes_received": 42,
+            }
+            if event_type == "http_request"
+            else {"banner": "SSH-2.0-test"}
+        )
+        return {
+            "id": event_id,
+            "schema_version": 1,
+            "trap_id": trap_id,
+            "attack_session_id": attack_session_id,
+            "event_type": event_type,
+            "observed_at": observed_at,
+            "source_ip": source_ip,
+            "source_port": 54321,
+            "target_service": "http" if event_type == "http_request" else "ssh",
+            "target_port": 80 if event_type == "http_request" else 22,
+            "payload": payload,
+        }
+
+    matching = event(
+        event_id="00000000-0000-0000-0000-000000000002",
+        trap_id=first_trap["id"],
+        attack_session_id=matching_session,
+        event_type="http_request",
+        observed_at="2020-01-01T00:00:00Z",
+        source_ip="192.0.2.20",
+    )
+    same_received_later_uuid = event(
+        event_id="00000000-0000-0000-0000-000000000003",
+        trap_id=first_trap["id"],
+        attack_session_id=str(uuid4()),
+        event_type="connection_opened",
+        observed_at="2030-01-01T00:00:00Z",
+        source_ip="192.0.2.30",
+    )
+    other_trap = event(
+        event_id="00000000-0000-0000-0000-000000000001",
+        trap_id=second_trap["id"],
+        attack_session_id=str(uuid4()),
+        event_type="http_request",
+        observed_at="2025-01-01T00:00:00Z",
+        source_ip="192.0.2.20",
+    )
+    first_response = await lifecycle_client.post(
+        "/assets/v2/init",
+        headers=authorization(first_secret),
+        json={"events": [matching, same_received_later_uuid]},
+    )
+    second_response = await lifecycle_client.post(
+        "/assets/v2/init",
+        headers=authorization(second_secret),
+        json={"events": [other_trap]},
+    )
+    assert first_response.status_code == second_response.status_code == 200
+
+    unfiltered = await lifecycle_client.get(
+        "/api/v1/security-events",
+        params={"trap_id": first_trap["id"], "limit": 2},
+    )
+    received_at = next(
+        item["received_at"]
+        for item in unfiltered.json()["items"]
+        if item["id"] == matching["id"]
+    )
+    filtered = await lifecycle_client.get(
+        "/api/v1/security-events",
+        params={
+            "trap_id": first_trap["id"],
+            "attack_session_id": matching_session,
+            "event_type": "http_request",
+            "source_ip": "192.0.2.20",
+            "received_from": received_at,
+            "received_to": received_at,
+        },
+    )
+
+    assert [item["id"] for item in unfiltered.json()["items"]] == [
+        same_received_later_uuid["id"],
+        matching["id"],
+    ]
+    assert [item["id"] for item in filtered.json()["items"]] == [matching["id"]]
+    assert filtered.json()["items"][0]["observed_at"] == "2020-01-01T00:00:00Z"
+    assert (
+        await lifecycle_client.get(
+            "/api/v1/security-events",
+            params={"received_from": "2026-10-15T12:00:00"},
+        )
+    ).status_code == 422
+    assert (
+        await lifecycle_client.get(
+            "/api/v1/security-events",
+            params={
+                "received_from": "2026-10-16T00:00:00Z",
+                "received_to": "2026-10-15T00:00:00Z",
+            },
+        )
+    ).status_code == 422
+    assert (
+        await lifecycle_client.get(
+            "/api/v1/security-events", params={"limit": 501}
+        )
+    ).status_code == 422
+    assert (
+        await lifecycle_client.delete(
+            f"/api/v1/security-events/{matching['id']}",
+            headers={"Origin": "https://test"},
+        )
+    ).status_code in {404, 405}
+    assert (
+        await lifecycle_client.patch(
+            f"/api/v1/attack-sessions/{matching_session}",
+            headers={"Origin": "https://test"},
+            json={},
+        )
+    ).status_code in {404, 405}
+
+
+async def test_retention_removes_expired_security_data_and_audit_entries_independently(
+    lifecycle_app, lifecycle_client
+) -> None:
+    from center.api.retention import DataRetention
+
+    created = await precreate_trap(lifecycle_client)
+    secret = await enroll_trap(lifecycle_client, created)
+    old_event_id = str(uuid4())
+    old_session_id = str(uuid4())
+    recent_event_id = str(uuid4())
+    recent_session_id = str(uuid4())
+    old_orphan_session_id = uuid4()
+    recent_orphan_session_id = uuid4()
+
+    def event(event_id: str, attack_session_id: str) -> dict:
+        return {
+            "id": event_id,
+            "schema_version": 1,
+            "trap_id": created["id"],
+            "attack_session_id": attack_session_id,
+            "event_type": "connection_opened",
+            "observed_at": "2026-10-15T00:00:00Z",
+            "source_ip": "192.0.2.40",
+            "source_port": 54321,
+            "target_service": "ssh",
+            "target_port": 22,
+            "payload": {"banner": "SSH-2.0-test"},
+        }
+
+    ingested = await lifecycle_client.post(
+        "/assets/v2/init",
+        headers=authorization(secret),
+        json={
+            "events": [
+                event(old_event_id, old_session_id),
+                event(recent_event_id, recent_session_id),
+            ]
+        },
+    )
+    assert ingested.status_code == 200
+    now = datetime(2026, 10, 15, 12, tzinfo=UTC)
+    async with lifecycle_app.state.database.session_factory() as session:
+        old_event = await session.get(SecurityEvent, old_event_id)
+        old_session = await session.get(AttackSession, old_session_id)
+        recent_event = await session.get(SecurityEvent, recent_event_id)
+        recent_session = await session.get(AttackSession, recent_session_id)
+        old_event.received_at = now - timedelta(days=31)
+        # Agent clocks are not authoritative: the session may appear to start
+        # far in the future, but it expires with its last server-received event.
+        old_session.started_at = now + timedelta(days=365)
+        recent_event.received_at = now - timedelta(days=29)
+        recent_session.started_at = now - timedelta(days=29)
+        session.add_all(
+            [
+                AttackSession(
+                    id=old_orphan_session_id,
+                    trap_id=created["id"],
+                    source_ip="192.0.2.42",
+                    started_at=now - timedelta(days=31),
+                    protocol="ssh",
+                    session_metadata={},
+                ),
+                AttackSession(
+                    id=recent_orphan_session_id,
+                    trap_id=created["id"],
+                    source_ip="192.0.2.41",
+                    started_at=now - timedelta(days=1),
+                    protocol="ssh",
+                    session_metadata={},
+                ),
+                AuditEntry(
+                    action="retention.old",
+                    entity="test",
+                    details={},
+                    created_at=now - timedelta(days=366),
+                ),
+                AuditEntry(
+                    action="retention.recent",
+                    entity="test",
+                    details={},
+                    created_at=now - timedelta(days=364),
+                ),
+            ]
+        )
+        await session.commit()
+
+    result = await DataRetention(
+        lifecycle_app.state.database.session_factory,
+        security_days=30,
+        audit_days=365,
+    ).cleanup(now)
+
+    assert result.security_events == 1
+    assert result.attack_sessions == 2
+    assert result.audit_entries == 1
+    async with lifecycle_app.state.database.session_factory() as session:
+        assert await session.get(SecurityEvent, old_event_id) is None
+        assert await session.get(AttackSession, old_session_id) is None
+        assert await session.get(SecurityEvent, recent_event_id) is not None
+        assert await session.get(AttackSession, recent_session_id) is not None
+        assert await session.get(AttackSession, old_orphan_session_id) is None
+        assert await session.get(AttackSession, recent_orphan_session_id) is not None
+        retained_audit = list(
+            await session.scalars(
+                select(AuditEntry.action).where(
+                    AuditEntry.action.in_(["retention.old", "retention.recent"])
+                )
+            )
+        )
+    assert retained_audit == ["retention.recent"]
+
+
 async def test_enrolled_agent_reads_its_assigned_trap_profile(
     lifecycle_client,
 ) -> None:

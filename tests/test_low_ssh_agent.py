@@ -3,7 +3,7 @@ import json
 import logging
 import ssl
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import URLError
@@ -16,6 +16,7 @@ from agent.low.honeyforge_low import (
     EventQueue,
     JsonLogFormatter,
     LowHttpAgent,
+    LowHttpAttackSessionRegistry,
     LowMySqlAgent,
     LowSshAgent,
 )
@@ -196,6 +197,101 @@ async def test_http_source_reuses_attack_session_for_fifteen_minutes(
     opened = [event for event in events if event["event_type"] == "connection_opened"]
     assert len(opened) == 2
     assert opened[0]["attack_session_id"] == opened[1]["attack_session_id"]
+
+
+async def test_http_session_survives_ports_and_service_replacement(
+    tmp_path: Path,
+) -> None:
+    queue = EventQueue(tmp_path / "http-shared-session.sqlite3")
+    trap_id = uuid4()
+    registry = LowHttpAttackSessionRegistry()
+    first = LowHttpAgent(
+        trap_id=trap_id,
+        host="127.0.0.1",
+        port=0,
+        queue=queue,
+        session_registry=registry,
+    )
+    second = LowHttpAgent(
+        trap_id=trap_id,
+        host="127.0.0.1",
+        port=0,
+        queue=queue,
+        session_registry=registry,
+    )
+    await first.start()
+    await second.start()
+    try:
+        for port in (first.port, second.port):
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(b"GET / HTTP/1.1\r\nHost: trap\r\n\r\n")
+            await writer.drain()
+            await reader.read()
+            writer.close()
+            await writer.wait_closed()
+    finally:
+        await first.stop()
+        await second.stop()
+
+    replacement = LowHttpAgent(
+        trap_id=trap_id,
+        host="127.0.0.1",
+        port=0,
+        queue=queue,
+        session_registry=registry,
+    )
+    await replacement.start()
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", replacement.port)
+        writer.write(b"GET / HTTP/1.1\r\nHost: trap\r\n\r\n")
+        await writer.drain()
+        await reader.read()
+        writer.close()
+        await writer.wait_closed()
+        await _wait_for_events(queue, count=9)
+    finally:
+        await replacement.stop()
+
+    opened = [
+        event
+        for event in queue.pending(limit=20)
+        if event["event_type"] == "connection_opened"
+    ]
+    assert len(opened) == 3
+    assert len({event["attack_session_id"] for event in opened}) == 1
+
+
+async def test_http_session_closes_at_inactivity_boundary_without_next_request(
+    tmp_path: Path,
+) -> None:
+    queue = EventQueue(tmp_path / "http-session-expiry.sqlite3")
+    agent = LowHttpAgent(
+        trap_id=uuid4(),
+        host="127.0.0.1",
+        port=0,
+        queue=queue,
+        session_registry=LowHttpAttackSessionRegistry(
+            timeout=timedelta(milliseconds=20)
+        ),
+    )
+    await agent.start()
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", agent.port)
+        writer.write(b"GET / HTTP/1.1\r\nHost: trap\r\n\r\n")
+        await writer.drain()
+        await reader.read()
+        writer.close()
+        await writer.wait_closed()
+        await _wait_for_events(queue, count=4)
+    finally:
+        await agent.stop()
+
+    expired = [
+        event
+        for event in queue.pending(limit=10)
+        if event["payload"].get("session_expired")
+    ]
+    assert len(expired) == 1
 
 
 async def _wait_for_events(queue: EventQueue, *, count: int) -> None:

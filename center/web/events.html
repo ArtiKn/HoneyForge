@@ -20,6 +20,27 @@
       <h1>Security Events</h1>
       <p>Durable observations reported by deployed Traps.</p>
     </header>
+    <form class="event-filters" id="event-filters" action="/events.html" method="get">
+      <label>Trap ID <input name="trap_id" type="text" autocomplete="off" /></label>
+      <label>Attack Session ID <input name="attack_session_id" type="text" autocomplete="off" /></label>
+      <label>Event type
+        <select name="event_type">
+          <option value="">All event types</option>
+          <option value="connection_opened">Connection opened</option>
+          <option value="authentication_attempt">Authentication attempt</option>
+          <option value="command_entered">Command entered</option>
+          <option value="http_request">HTTP request</option>
+          <option value="connection_closed">Connection closed</option>
+        </select>
+      </label>
+      <label>Source IP <input name="source_ip" type="text" autocomplete="off" /></label>
+      <label>Received from <input name="received_from" type="datetime-local" /></label>
+      <label>Received to <input name="received_to" type="datetime-local" /></label>
+      <div class="filter-actions">
+        <button class="button" type="submit">Apply filters</button>
+        <a class="button quiet" href="/events.html">Clear</a>
+      </div>
+    </form>
     <ol class="event-stream" id="event-stream" aria-live="polite"></ol>
     <p class="empty-events" id="empty-events">No Security Events received.</p>
   </main>

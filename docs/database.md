@@ -82,10 +82,20 @@ erDiagram
 ## Инварианты
 
 - `SecurityEvent.id` — UUID события и идемпотентный ключ доставки.
-- `received_at` задаётся Control Center; стабильный порядок — `(received_at, id)`.
+- `received_at` задаётся Control Center; выдача Security Events сортируется по
+  `(received_at DESC, id DESC)`, а `observed_at` показывается отдельно и не влияет
+  на порядок или retention.
 - Traps и ранее назначенные Trap Profiles архивируются, а Security Events, Attack Sessions и audit entries неизменяемы до retention cleanup.
-- Security data хранится 30 дней по умолчанию, audit entries — 365 дней; сроки конфигурируемы.
+- Security data хранится `SECURITY_DATA_RETENTION_DAYS` (30 дней по умолчанию),
+  audit entries — `AUDIT_ENTRY_RETENTION_DAYS` (365 дней); фоновая очистка
+  запускается каждые `RETENTION_SWEEP_INTERVAL_SECONDS` (сутки по умолчанию).
 - PostgreSQL notification передаёт только UUID Security Event; listener загружает полную запись из БД.
+
+## Индексы Security Events
+
+- `(received_at, id)` — стабильная cursor pagination.
+- `(trap_id, received_at)`, `(attack_session_id, received_at)`,
+  `(source_ip, received_at)` и `(event_type)` — фильтры расследования.
 
 ## Таблицы
 

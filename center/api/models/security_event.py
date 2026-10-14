@@ -13,7 +13,11 @@ class SecurityEvent(Base):
     __tablename__ = "security_events"
     __table_args__ = (
         Index("idx_security_events_received_at", "received_at"),
+        Index("idx_security_events_received_id", "received_at", "id"),
         Index("idx_security_events_trap", "trap_id", "received_at"),
+        Index(
+            "idx_security_events_attack_session", "attack_session_id", "received_at"
+        ),
         Index("idx_security_events_source_ip", "source_ip", "received_at"),
         Index("idx_security_events_type", "event_type"),
         CheckConstraint(

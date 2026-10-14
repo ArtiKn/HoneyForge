@@ -32,6 +32,12 @@ async def test_canonical_schema_applies_to_real_postgresql() -> None:
                 lambda sync_connection: set(inspect(sync_connection).get_table_names())
                 - {"alembic_version"}
             )
+            security_event_indexes = await connection.run_sync(
+                lambda sync_connection: {
+                    index["name"]
+                    for index in inspect(sync_connection).get_indexes("security_events")
+                }
+            )
         assert table_names == {
             "trap_profiles",
             "traps",
@@ -40,6 +46,10 @@ async def test_canonical_schema_applies_to_real_postgresql() -> None:
             "operators",
             "audit_entries",
         }
+        assert {
+            "idx_security_events_received_id",
+            "idx_security_events_attack_session",
+        } <= security_event_indexes
     finally:
         await engine.dispose()
         subprocess.run(

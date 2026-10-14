@@ -1,16 +1,17 @@
-import base64
-import binascii
-import json
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, desc, or_, select
+from pydantic import IPvAnyAddress
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from center.api.database import get_db
-from center.api.models import SecurityEvent
+from center.api.security_event_query import (
+    InvalidSecurityEventCursor,
+    SecurityEventFilters,
+    SecurityEventQuery,
+)
 from center.api.schemas.security_event import SecurityEventPage
 
 router = APIRouter()
@@ -21,64 +22,56 @@ async def ping() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def _encode_cursor(received_at: datetime, event_id: UUID) -> str:
-    value = json.dumps([received_at.isoformat(), str(event_id)]).encode()
-    return base64.urlsafe_b64encode(value).decode().rstrip("=")
-
-
-def _decode_cursor(cursor: str) -> tuple[datetime, UUID]:
-    try:
-        padding = "=" * (-len(cursor) % 4)
-        received_at, event_id = json.loads(
-            base64.urlsafe_b64decode(cursor + padding).decode()
-        )
-        parsed_at = datetime.fromisoformat(received_at)
-        if parsed_at.tzinfo is None:
-            raise ValueError
-        return parsed_at, UUID(event_id)
-    except (
-        ValueError,
-        TypeError,
-        binascii.Error,
-        json.JSONDecodeError,
-        UnicodeDecodeError,
-    ) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Invalid Security Event cursor",
-        ) from exc
-
-
 @router.get("", response_model=SecurityEventPage)
 async def list_security_events(
     session: Annotated[AsyncSession, Depends(get_db)],
     trap_id: UUID | None = None,
+    attack_session_id: UUID | None = None,
+    event_type: Literal[
+        "connection_opened",
+        "authentication_attempt",
+        "command_entered",
+        "http_request",
+        "connection_closed",
+    ]
+    | None = None,
+    source_ip: IPvAnyAddress | None = None,
+    received_from: datetime | None = None,
+    received_to: datetime | None = None,
     cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> SecurityEventPage:
-    statement = select(SecurityEvent).order_by(
-        desc(SecurityEvent.received_at), desc(SecurityEvent.id)
-    )
-    if trap_id is not None:
-        statement = statement.where(SecurityEvent.trap_id == trap_id)
-    if cursor is not None:
-        received_at, event_id = _decode_cursor(cursor)
-        statement = statement.where(
-            or_(
-                SecurityEvent.received_at < received_at,
-                and_(
-                    SecurityEvent.received_at == received_at,
-                    SecurityEvent.id < event_id,
-                ),
+    for value in (received_from, received_to):
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Security Event time filters must include a UTC offset",
             )
+    if (
+        received_from is not None
+        and received_to is not None
+        and received_from > received_to
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="received_from must not be later than received_to",
         )
-    events = list(await session.scalars(statement.limit(limit + 1)))
-    has_more = len(events) > limit
-    items = events[:limit]
-    next_cursor = (
-        _encode_cursor(items[-1].received_at, items[-1].id)
-        if has_more and items
-        else None
-    )
-    return SecurityEventPage(items=items, next_cursor=next_cursor)
+    try:
+        return await SecurityEventQuery(session).page(
+            SecurityEventFilters(
+                trap_id=trap_id,
+                attack_session_id=attack_session_id,
+                event_type=event_type,
+                source_ip=str(source_ip) if source_ip is not None else None,
+                received_from=received_from,
+                received_to=received_to,
+            ),
+            cursor=cursor,
+            limit=limit,
+        )
+    except InvalidSecurityEventCursor as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Invalid Security Event cursor",
+        ) from exc
 

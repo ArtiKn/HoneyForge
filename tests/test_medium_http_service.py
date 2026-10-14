@@ -170,6 +170,43 @@ async def test_medium_http_registry_keeps_session_across_service_replacement(
     queue.close()
 
 
+async def test_medium_http_registry_never_shares_session_between_traps(
+    tmp_path: Path,
+) -> None:
+    queue = EventQueue(tmp_path / "medium-http-traps.sqlite3")
+    registry = HttpAttackSessionRegistry(timeout_seconds=60)
+    first = MediumHttpService(
+        trap_id=uuid4(),
+        host="127.0.0.1",
+        port=0,
+        queue=queue,
+        session_registry=registry,
+    )
+    second = MediumHttpService(
+        trap_id=uuid4(),
+        host="127.0.0.1",
+        port=0,
+        queue=queue,
+        session_registry=registry,
+    )
+    await first.start()
+    await second.start()
+    try:
+        await _request(first.port, b"GET /login HTTP/1.1\r\nHost: trap\r\n\r\n")
+        await _request(second.port, b"GET /login HTTP/1.1\r\nHost: trap\r\n\r\n")
+    finally:
+        await first.stop()
+        await second.stop()
+
+    opened = [
+        event
+        for event in queue.pending(limit=20)
+        if event["event_type"] == "connection_opened"
+    ]
+    assert len({event["attack_session_id"] for event in opened}) == 2
+    queue.close()
+
+
 async def _request(port: int, request: bytes) -> bytes:
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
     writer.write(request)

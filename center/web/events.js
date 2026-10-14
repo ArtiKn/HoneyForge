@@ -10,9 +10,22 @@ function renderEvent(event) {
   const item = document.createElement('li');
   item.className = 'security-event reveal';
 
-  const time = document.createElement('time');
-  time.dateTime = event.received_at;
-  time.textContent = new Date(event.received_at).toLocaleString();
+  const times = document.createElement('div');
+  times.className = 'event-times';
+  for (const [label, value] of [
+    ['Received', event.received_at],
+    ['Observed', event.observed_at],
+  ]) {
+    const row = document.createElement('span');
+    const caption = document.createElement('span');
+    caption.className = 'event-time-label';
+    caption.textContent = label;
+    const time = document.createElement('time');
+    time.dateTime = value;
+    time.textContent = new Date(value).toLocaleString();
+    row.append(caption, time);
+    times.append(row);
+  }
 
   const title = document.createElement('strong');
   title.textContent = labels[event.event_type] || event.event_type;
@@ -23,17 +36,77 @@ function renderEvent(event) {
   const detail = document.createElement('code');
   detail.textContent = event.payload.banner || JSON.stringify(event.payload);
 
-  item.append(time, title, route, detail);
+  item.append(times, title, route, detail);
   return item;
 }
 
 const stream = document.getElementById('event-stream');
 const emptyState = document.getElementById('empty-events');
+const filtersForm = document.getElementById('event-filters');
 const seenEventIds = new Set();
+const filterNames = [
+  'trap_id',
+  'attack_session_id',
+  'event_type',
+  'source_ip',
+  'received_from',
+  'received_to',
+];
+const pageParams = new URLSearchParams(location.search);
+const filterParams = new URLSearchParams();
+for (const name of filterNames) {
+  const value = pageParams.get(name);
+  if (!value) continue;
+  filterParams.set(name, value);
+  const field = filtersForm.elements.namedItem(name);
+  field.value = name.startsWith('received_')
+    ? new Date(value).toISOString().slice(0, 16)
+    : value;
+}
 let reconnectDelay = 250;
 let activeSocket = null;
 
+filtersForm.addEventListener('submit', event => {
+  event.preventDefault();
+  const target = new URLSearchParams();
+  for (const [name, value] of new FormData(filtersForm)) {
+    if (!value) continue;
+    target.set(
+      name,
+      name.startsWith('received_') ? new Date(value).toISOString() : value,
+    );
+  }
+  const query = target.toString();
+  location.assign(query ? `/events.html?${query}` : '/events.html');
+});
+
+function securityEventsUrl(cursor = null) {
+  const query = new URLSearchParams(filterParams);
+  if (cursor) query.set('cursor', cursor);
+  const encoded = query.toString();
+  return `/api/v1/security-events${encoded ? `?${encoded}` : ''}`;
+}
+
+function matchesFilters(event) {
+  const comparisons = {
+    trap_id: event.trap_id,
+    attack_session_id: event.attack_session_id,
+    event_type: event.event_type,
+    source_ip: event.source_ip,
+  };
+  for (const [name, actual] of Object.entries(comparisons)) {
+    const expected = filterParams.get(name);
+    if (expected && actual !== expected) return false;
+  }
+  const received = Date.parse(event.received_at);
+  const from = filterParams.get('received_from');
+  const to = filterParams.get('received_to');
+  return (!from || received >= Date.parse(from))
+    && (!to || received <= Date.parse(to));
+}
+
 function displayEvent(event) {
+  if (!matchesFilters(event)) return false;
   if (seenEventIds.has(event.id)) return false;
   seenEventIds.add(event.id);
   const item = renderEvent(event);
@@ -63,8 +136,7 @@ async function fetchPage(url) {
 async function recoverGap(socket, bufferedEvents) {
   let cursor = null;
   do {
-    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
-    const page = await fetchPage(`/api/v1/security-events${query}`);
+    const page = await fetchPage(securityEventsUrl(cursor));
     page.items.forEach(event => displayEvent(event));
     cursor = page.next_cursor;
   } while (cursor && activeSocket === socket);
@@ -104,7 +176,7 @@ function connectRealtime() {
   socket.onerror = () => socket.close();
 }
 
-fetchPage('/api/v1/security-events')
+fetchPage(securityEventsUrl())
   .then(page => {
     page.items.forEach(event => displayEvent(event));
     emptyState.hidden = seenEventIds.size > 0;

@@ -4,7 +4,7 @@ import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import pytest
 
@@ -193,6 +193,14 @@ def test_security_events_ui_recovers_a_gap_and_deduplicates_realtime_events() ->
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    page_filters = {
+        "trap_id": str(first["trap_id"]),
+        "attack_session_id": str(first["attack_session_id"]),
+        "event_type": "connection_opened",
+        "source_ip": "192.0.2.44",
+        "received_from": "2026-10-14T12:00:00Z",
+        "received_to": "2026-10-14T12:00:09Z",
+    }
     try:
         result = subprocess.run(
             [
@@ -203,7 +211,7 @@ def test_security_events_ui_recovers_a_gap_and_deduplicates_realtime_events() ->
                 "--disable-dev-shm-usage",
                 "--virtual-time-budget=2500",
                 "--dump-dom",
-                f"http://127.0.0.1:{server.server_port}/events.html",
+                f"http://127.0.0.1:{server.server_port}/events.html?{urlencode(page_filters)}",
             ],
             check=True,
             capture_output=True,
@@ -216,6 +224,10 @@ def test_security_events_ui_recovers_a_gap_and_deduplicates_realtime_events() ->
         thread.join(timeout=2)
 
     assert any("cursor=page-2" in path for path in requested_pages)
+    first_request = parse_qs(urlparse(requested_pages[0]).query)
+    assert first_request == {key: [value] for key, value in page_filters.items()}
     assert result.stdout.count('class="security-event reveal"') == 3
     for number in (1, 2, 3):
         assert result.stdout.count(f"SSH-event-{number}") == 1
+    assert result.stdout.count('class="event-time-label">Observed</span>') == 3
+    assert result.stdout.count('class="event-time-label">Received</span>') == 3

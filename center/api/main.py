@@ -21,6 +21,7 @@ from center.api.database import Database
 from center.api.operator_auth import operator_for_session, seed_operator
 from center.api.realtime.pg_listener import SecurityEventRelay
 from center.api.realtime.ws_manager import ConnectionManager
+from center.api.retention import DataRetention, monitor_retention
 from center.api.routers import (
     agent,
     auth,
@@ -57,13 +58,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 sweep_interval_seconds=app_settings.health_sweep_interval_seconds,
             )
         )
+        retention_monitor = asyncio.create_task(
+            monitor_retention(
+                DataRetention(
+                    database.session_factory,
+                    security_days=app_settings.security_data_retention_days,
+                    audit_days=app_settings.audit_entry_retention_days,
+                ),
+                sweep_interval_seconds=app_settings.retention_sweep_interval_seconds,
+            )
+        )
         try:
             yield
         finally:
             await event_relay.stop()
             health_monitor.cancel()
+            retention_monitor.cancel()
             with suppress(asyncio.CancelledError):
                 await health_monitor
+            with suppress(asyncio.CancelledError):
+                await retention_monitor
             await database.close()
 
     application = FastAPI(

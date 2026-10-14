@@ -498,7 +498,7 @@ class _LowTcpService:
         peer = writer.get_extra_info("peername")
         source_ip = str(peer[0]) if peer else "unknown"
         source_port = int(peer[1]) if peer else 0
-        attack_session_id = self.session_id_for(source_ip)
+        attack_session_id = self.session_id_for(source_ip, source_port)
         banner = self.banner()
         self.queue.enqueue(
             self._event(
@@ -566,44 +566,99 @@ class _LowTcpService:
     def banner(self) -> str:
         raise NotImplementedError
 
-    def session_id_for(self, source_ip: str) -> str:
+    def session_id_for(self, source_ip: str, source_port: int) -> str:
         return str(uuid4())
 
     async def serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, **kwargs: str) -> int:
         raise NotImplementedError
 
 
+class LowHttpAttackSessionRegistry:
+    """Correlate HTTP activity by source within one Trap runtime."""
+
+    def __init__(self, *, timeout: timedelta = timedelta(minutes=15)) -> None:
+        if timeout <= timedelta(0):
+            raise ValueError("HTTP session timeout must be positive")
+        self.timeout = timeout
+        self._sessions: dict[tuple[UUID, str], tuple[str, datetime, int, Any]] = {}
+        self._timers: dict[tuple[UUID, str], asyncio.TimerHandle] = {}
+
+    def get(
+        self,
+        trap_id: UUID,
+        source_ip: str,
+        source_port: int,
+        on_expire: Any,
+    ) -> str:
+        now = datetime.now(UTC)
+        key = (trap_id, source_ip)
+        existing = self._sessions.get(key)
+        if existing is not None and now - existing[1] <= self.timeout:
+            session_id = existing[0]
+        else:
+            if existing is not None:
+                self._expire(key, existing[0])
+            session_id = str(uuid4())
+        self._sessions[key] = (session_id, now, source_port, on_expire)
+        timer = self._timers.pop(key, None)
+        if timer is not None:
+            timer.cancel()
+        self._timers[key] = asyncio.get_running_loop().call_later(
+            self.timeout.total_seconds(), self._expire, key, session_id
+        )
+        return session_id
+
+    def _expire(self, key: tuple[UUID, str], session_id: str) -> None:
+        current = self._sessions.get(key)
+        if current is None or current[0] != session_id:
+            return
+        self._sessions.pop(key, None)
+        self._timers.pop(key, None)
+        current[3](session_id, key[1], current[2], datetime.now(UTC))
+
+
 class LowHttpAgent(_LowTcpService):
     protocol = "http"
 
-    def __init__(self, *, banner: str | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        banner: str | None = None,
+        session_registry: LowHttpAttackSessionRegistry | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.http_banner = banner or "nginx/1.24.0"
-        self._http_sessions: dict[str, tuple[str, datetime, int]] = {}
+        self._session_registry = session_registry or LowHttpAttackSessionRegistry()
 
     def banner(self) -> str:
         return self.http_banner
 
-    def session_id_for(self, source_ip: str) -> str:
-        now = datetime.now(UTC)
-        existing = self._http_sessions.get(source_ip)
-        if existing is not None and now - existing[1] <= timedelta(minutes=15):
-            self._http_sessions[source_ip] = (existing[0], now, existing[2])
-            return existing[0]
-        if existing is not None:
-            self.queue.enqueue(
-                self._event(
-                    attack_session_id=existing[0],
-                    event_type="connection_closed",
-                    observed_at=now.isoformat(),
-                    source_ip=source_ip,
-                    source_port=existing[2],
-                    payload={"bytes_sent": 0, "session_expired": True},
-                )
+    def session_id_for(self, source_ip: str, source_port: int) -> str:
+        return self._session_registry.get(
+            self.trap_id,
+            source_ip,
+            source_port,
+            self._enqueue_expired_session,
+        )
+
+    def _enqueue_expired_session(
+        self,
+        session_id: str,
+        source_ip: str,
+        source_port: int,
+        observed_at: datetime,
+    ) -> None:
+        self.queue.enqueue(
+            self._event(
+                attack_session_id=session_id,
+                event_type="connection_closed",
+                observed_at=observed_at.isoformat(),
+                source_ip=source_ip,
+                source_port=source_port,
+                payload={"bytes_sent": 0, "session_expired": True},
             )
-        session_id = str(uuid4())
-        self._http_sessions[source_ip] = (session_id, now, 0)
-        return session_id
+        )
 
     async def serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, **kwargs: str) -> int:
         chunks: list[bytes] = []
@@ -638,11 +693,6 @@ class LowHttpAgent(_LowTcpService):
                     },
                 )
             )
-            session = self._http_sessions.get(kwargs["source_ip"])
-            if session is not None:
-                self._http_sessions[kwargs["source_ip"]] = (
-                    session[0], session[1], int(kwargs["source_port"])
-                )
         body = b"<html><title>HoneyForge</title><body>HoneyForge</body></html>"
         response = (
             b"HTTP/1.1 200 OK\r\nServer: "

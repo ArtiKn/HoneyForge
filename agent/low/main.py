@@ -15,6 +15,7 @@ from honeyforge_low import (
     EventQueue,
     JsonLogFormatter,
     LowHttpAgent,
+    LowHttpAttackSessionRegistry,
     LowMySqlAgent,
     LowSshAgent,
 )
@@ -44,6 +45,8 @@ async def run() -> None:
         max_events=int(os.getenv("EVENT_QUEUE_MAX_EVENTS", "100000")),
         max_bytes=int(os.getenv("EVENT_QUEUE_MAX_BYTES", str(256 * 1024 * 1024))),
     )
+    http_sessions = LowHttpAttackSessionRegistry()
+
     def configured_services(config: dict[str, Any]) -> list[TrapService]:
         if config["interaction_level"] != "low":
             raise RuntimeError(
@@ -71,7 +74,7 @@ async def run() -> None:
                     }
                 )
             elif protocol == "http":
-                service = LowHttpAgent(**settings)
+                service = LowHttpAgent(**settings, session_registry=http_sessions)
             elif protocol == "mysql":
                 service = LowMySqlAgent(**settings)
             else:

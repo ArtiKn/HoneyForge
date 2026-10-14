@@ -21,34 +21,41 @@ class HttpAttackSessionRegistry:
         if timeout_seconds <= 0:
             raise ValueError("HTTP session timeout must be positive")
         self.timeout_seconds = timeout_seconds
-        self._sessions: dict[str, tuple[str, datetime, int, Any]] = {}
-        self._timers: dict[str, asyncio.TimerHandle] = {}
+        self._sessions: dict[tuple[UUID, str], tuple[str, datetime, int, Any]] = {}
+        self._timers: dict[tuple[UUID, str], asyncio.TimerHandle] = {}
 
-    def get(self, source_ip: str, source_port: int, on_expire: Any) -> str:
+    def get(
+        self,
+        trap_id: UUID,
+        source_ip: str,
+        source_port: int,
+        on_expire: Any,
+    ) -> str:
         now = datetime.now(UTC)
-        existing = self._sessions.get(source_ip)
+        key = (trap_id, source_ip)
+        existing = self._sessions.get(key)
         if existing is not None and now - existing[1] < timedelta(seconds=self.timeout_seconds):
             session_id = existing[0]
         else:
             if existing is not None:
-                self._expire(source_ip, existing[0])
+                self._expire(key, existing[0])
             session_id = str(uuid4())
-        self._sessions[source_ip] = (session_id, now, source_port, on_expire)
-        timer = self._timers.pop(source_ip, None)
+        self._sessions[key] = (session_id, now, source_port, on_expire)
+        timer = self._timers.pop(key, None)
         if timer is not None:
             timer.cancel()
-        self._timers[source_ip] = asyncio.get_running_loop().call_later(
-            self.timeout_seconds, self._expire, source_ip, session_id
+        self._timers[key] = asyncio.get_running_loop().call_later(
+            self.timeout_seconds, self._expire, key, session_id
         )
         return session_id
 
-    def _expire(self, source_ip: str, session_id: str) -> None:
-        current = self._sessions.get(source_ip)
+    def _expire(self, key: tuple[UUID, str], session_id: str) -> None:
+        current = self._sessions.get(key)
         if current is None or current[0] != session_id:
             return
-        self._sessions.pop(source_ip, None)
-        self._timers.pop(source_ip, None)
-        current[3](session_id, source_ip, current[2])
+        self._sessions.pop(key, None)
+        self._timers.pop(key, None)
+        current[3](session_id, key[1], current[2])
 
 
 class MediumHttpService:
@@ -292,7 +299,7 @@ class MediumHttpService:
 
     def _attack_session(self, source_ip: str, source_port: int) -> str:
         return self._session_registry.get(
-            source_ip, source_port, self._enqueue_expired_session
+            self.trap_id, source_ip, source_port, self._enqueue_expired_session
         )
 
     def _enqueue_expired_session(

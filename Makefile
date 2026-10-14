@@ -3,6 +3,8 @@
 
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
+PYTHON := $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
+DEMO_PY := docker run --rm --network host --user "$$(id -u):$$(id -g)" -v "$$(pwd)":/workspace -w /workspace python:3.12-slim python
 
 COMPOSE      := docker compose --env-file .env
 CENTER_FILE  := -f deploy/docker-compose.yml
@@ -13,7 +15,7 @@ CENTER := $(COMPOSE) $(CENTER_FILE)
 HONEY  := $(COMPOSE) $(HONEY_FILE) $(DEMO_FILE)
 HONEY_DISTRIBUTED := $(COMPOSE) $(HONEY_FILE)
 
-.PHONY: help env up down restart logs ps build config test certs \
+.PHONY: help env up down restart logs ps build config test certs demo demo-env demo-seed demo-attack demo-smoke \
         honeypots-up honeypots-down honeypots-build honeypots-config \
         honeypots-distributed-config clean
 
@@ -26,6 +28,24 @@ env: ## Create .env from .env.example if missing
 
 certs: ## Generate self-signed certificates (task 6.5)
 	@bash deploy/scripts/gen_certs.sh
+
+demo-env: ## Create secure local demo configuration without overwriting it
+	@$(DEMO_PY) deploy/scripts/demo.py env
+
+demo: demo-env certs ## Start the complete idempotent local MVP demo
+	$(CENTER) up -d --build --force-recreate
+	@$(DEMO_PY) deploy/scripts/demo.py seed
+	$(HONEY) up -d --build
+	@echo "[demo] Control Center: https://localhost:$${CENTER_HTTPS_PORT:-8443}"
+
+demo-seed: env certs ## Seed demo Trap Profiles, Traps and persistent credentials
+	@$(DEMO_PY) deploy/scripts/demo.py seed
+
+demo-attack: ## Generate deterministic SSH, HTTP and MySQL interactions locally
+	@$(DEMO_PY) deploy/scripts/demo.py attack
+
+demo-smoke: ## Probe Security Event delivery, REST persistence and UI visibility
+	@bash deploy/scripts/buffer_smoke.sh
 
 up: env certs ## Start the center stack (task 6.1)
 	$(CENTER) up -d --build
@@ -48,7 +68,7 @@ config: env ## Validate deploy/docker-compose.yml
 	$(CENTER) config -q
 
 test: ## Run tests
-	@if [ -d tests ]; then python3 -m pytest -q; \
+	@if [ -d tests ]; then $(PYTHON) -m pytest -q; \
 	else echo "[test] tests/ is empty - add tests (tests block)"; fi
 
 honeypots-up: env ## Start the honeypot fleet skeleton (task 6.2)

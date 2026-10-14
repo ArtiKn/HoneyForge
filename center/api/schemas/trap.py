@@ -31,6 +31,10 @@ class TrapProvisioned(TrapRead):
     enrollment_token: str
 
 
+class EnrollmentTokenResponse(BaseModel):
+    enrollment_token: str
+
+
 class EnrollmentRequest(BaseModel):
     enrollment_token: str = Field(min_length=32, max_length=256)
 

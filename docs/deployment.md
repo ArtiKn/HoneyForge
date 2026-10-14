@@ -63,6 +63,20 @@ distributed-схеме `honeypot_exposed` — internal network без внешн
 
 ## Запуск
 
+### Полный локальный demo
+
+На Linux x86-64 или arm64 с Docker Engine и Compose v2:
+
+```bash
+make demo
+make demo-attack
+make demo-smoke
+```
+
+Внешние порты demo: Control Center `8443`; Low SSH/HTTP/MySQL `2222`, `8080`,
+`33060`; Medium SSH/HTTP `2223`, `8081`. `make demo` безопасен для повторного
+запуска и не удаляет PostgreSQL volume.
+
 На Control Center:
 
 ```bash

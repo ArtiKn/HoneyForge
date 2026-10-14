@@ -51,6 +51,7 @@ def probe_deployment(
         headers={
             "Authorization": f"Bearer {secret}",
             "Content-Type": "application/javascript",
+            "Host": "assets.cdn-static.example",
         },
         method="POST",
     )

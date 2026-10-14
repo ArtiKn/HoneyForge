@@ -2,8 +2,14 @@
 # Never apply this file on a separated DMZ host; use real DNS there.
 services:
   agent-low:
+    environment:
+      CENTER_URL: https://assets.cdn-static.example:8443
+      LISTEN_HOST: 0.0.0.0
     extra_hosts:
       - "assets.cdn-static.example:host-gateway"
   agent-medium:
+    environment:
+      CENTER_URL: https://assets.cdn-static.example:8443
+      LISTEN_HOST: 0.0.0.0
     extra_hosts:
       - "assets.cdn-static.example:host-gateway"

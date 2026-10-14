@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760">
+  <rect width="1280" height="760" fill="#08131a"/>
+  <rect x="42" y="34" width="1196" height="692" rx="22" fill="#10232b" stroke="#2e5962"/>
+  <text x="82" y="100" fill="#c8f7e8" font-family="sans-serif" font-size="34" font-weight="700">HoneyForge</text>
+  <text x="82" y="145" fill="#80aeb0" font-family="sans-serif" font-size="17">Control Center · live fleet</text>
+  <text x="82" y="220" fill="#f0fbf6" font-family="sans-serif" font-size="26" font-weight="700">Trap status</text>
+  <g font-family="sans-serif">
+    <rect x="82" y="250" width="200" height="130" rx="14" fill="#193640"/><text x="106" y="298" fill="#7fd8c6" font-size="42" font-weight="700">0</text><text x="106" y="344" fill="#b0d0cf" font-size="16">Provisioning</text>
+    <rect x="304" y="250" width="200" height="130" rx="14" fill="#164b43"/><text x="328" y="298" fill="#8ff0cf" font-size="42" font-weight="700">2</text><text x="328" y="344" fill="#d2f8ec" font-size="16">Online</text>
+    <rect x="526" y="250" width="200" height="130" rx="14" fill="#193640"/><text x="550" y="298" fill="#7fd8c6" font-size="42" font-weight="700">0</text><text x="550" y="344" fill="#b0d0cf" font-size="16">Degraded</text>
+    <rect x="748" y="250" width="200" height="130" rx="14" fill="#193640"/><text x="772" y="298" fill="#7fd8c6" font-size="42" font-weight="700">0</text><text x="772" y="344" fill="#b0d0cf" font-size="16">Offline</text>
+  </g>
+  <rect x="82" y="430" width="1090" height="210" rx="14" fill="#0b1a21" stroke="#234a53"/>
+  <text x="112" y="478" fill="#c8f7e8" font-family="sans-serif" font-size="20" font-weight="700">Security Events</text>
+  <text x="112" y="525" fill="#8ff0cf" font-family="monospace" font-size="16">connection_opened   127.0.0.1:53124 → ssh:22</text>
+  <text x="112" y="565" fill="#8ff0cf" font-family="monospace" font-size="16">http_request        127.0.0.1:53125 → http:80</text>
+  <text x="112" y="605" fill="#8ff0cf" font-family="monospace" font-size="16">connection_opened   127.0.0.1:53126 → mysql:3306</text>
+</svg>

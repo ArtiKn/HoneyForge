@@ -8,7 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from center.api.auth_dependencies import CurrentOperator
 from center.api.database import get_db
 from center.api.models import AuditEntry, Trap, TrapProfile
-from center.api.schemas.trap import TrapCreate, TrapProvisioned, TrapRead
+from center.api.schemas.trap import (
+    EnrollmentTokenResponse,
+    TrapCreate,
+    TrapProvisioned,
+    TrapRead,
+)
 from center.api.trap_access import TrapAccess
 
 router = APIRouter()
@@ -77,4 +82,38 @@ async def revoke_trap(
         trap, operator.id, request.client.host if request.client else None
     )
     return trap
+
+
+@router.post("/{trap_id}/enrollment-token", response_model=EnrollmentTokenResponse)
+async def reissue_enrollment_token(
+    trap_id: UUID,
+    operator: CurrentOperator,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> EnrollmentTokenResponse:
+    """Recover an interrupted provisioning flow without rotating an online Trap."""
+
+    trap = await session.scalar(select(Trap).where(Trap.id == trap_id).with_for_update())
+    if trap is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if trap.status != "provisioning":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Enrollment tokens can only be reissued for provisioning Traps",
+        )
+    token = await TrapAccess(
+        session,
+        enrollment_minutes=request.app.state.settings.enrollment_token_minutes,
+    ).issue(trap)
+    session.add(
+        AuditEntry(
+            operator_id=operator.id,
+            action="trap.enrollment_token.reissued",
+            entity="trap",
+            entity_id=trap.id,
+            details={},
+            source_ip=request.client.host if request.client else None,
+        )
+    )
+    return EnrollmentTokenResponse(enrollment_token=token)
 

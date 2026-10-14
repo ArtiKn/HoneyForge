@@ -23,6 +23,8 @@
 - [Схема БД](docs/database.md) — ER-диаграмма, таблицы, индексы, триггер NOTIFY
 - [Развёртывание](docs/deployment.md) — demo CA, разнесённая топология и smoke-проверка
 - [Сценарии демонстрации](docs/demo_attack.md) — атака → событие в центре
+- [Acceptance report](docs/acceptance_report.md) — воспроизводимый MVP gate
+- [Презентация](docs/presentation.md) и [screenshots](docs/screenshots/) — пакет защиты
 
 ## Минимум для зачёта (Must)
 
@@ -53,6 +55,20 @@ healthcheck — `GET /health`, readiness — `GET /ready`, endpoint телеме
 `POST /assets/v2/init`.
 
 ## Контейнерное развёртывание
+
+Полный локальный demo запускается одной идемпотентной командой:
+
+```bash
+make demo
+make demo-attack
+make demo-smoke
+```
+
+Она создаёт отсутствующую конфигурацию и CA, собирает образы, применяет
+migrations, seed'ит Trap Profiles и Traps, а затем запускает Control Center и Agent'ов.
+Существующие `.env`, сертификаты, PostgreSQL volume и Trap credentials не
+перезаписываются. Подробный acceptance gate находится в
+[`docs/acceptance_report.md`](docs/acceptance_report.md).
 
 Локальная CA и серверный сертификат создаются командой `make certs`. Проверка
 сертификата Agent'ами обязательна; режима отключения TLS verification нет.

@@ -24,7 +24,11 @@ class Settings(BaseSettings):
         default="postgresql+asyncpg://honeyforge:honeyforge@localhost:5432/honeyforge",
         validation_alias="DATABASE_URL",
     )
-    cors_origins: list[str] = ["https://localhost", "http://localhost"]
+    cors_origins: list[str] = [
+        "https://localhost",
+        "https://localhost:8443",
+        "http://localhost",
+    ]
     agent_token: str = Field(default="change-me", validation_alias="AGENT_TOKEN")
     jwt_secret: str = Field(default="change-me", validation_alias="JWT_SECRET")
     access_token_expire_minutes: int = Field(

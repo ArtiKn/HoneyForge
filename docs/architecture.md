@@ -44,7 +44,7 @@ Collector нормализует батч, дополняет geoip, пишет 
 |---|---|---|
 | `mgmt_net` (internal) | API ↔ Postgres ↔ Collector ↔ pg_listener | Наружу — нет |
 | `agent_egress_net` | Исходящий management-трафик Agent | Только TLS к внешнему адресу Control Center |
-| `edge_net` | Nginx (center) ↔ Интернет | 443/tcp |
+| `edge_net` | Nginx Control Center ↔ Интернет | 8443/tcp в demo, 443/tcp в distributed override |
 | `honeypot_exposed` | Порты Low/Medium ловушек | Наружу открыты только эмулируемые порты (22, 80, 3306, …) |
 
 Агент **не знает** внутренних адресов БД, у него на руках только `AGENT_TOKEN` и URL маскированного endpoint'а.

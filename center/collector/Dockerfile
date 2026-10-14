@@ -15,6 +15,7 @@ COPY center/collector/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY center ./center
+COPY honeyforge_common ./honeyforge_common
 
 RUN chown -R collector:collector /app
 USER collector

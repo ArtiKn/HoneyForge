@@ -11,8 +11,6 @@ x-logging: &default-logging
 x-hardening: &hardening
   restart: unless-stopped
   logging: *default-logging
-  security_opt:
-    - no-new-privileges:true
 
 services:
   postgres:
@@ -28,6 +26,10 @@ services:
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
     networks:
       - mgmt_net
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -54,10 +56,21 @@ services:
       dockerfile: center/api/Dockerfile
     image: honeyforge/api:dev
     container_name: hf-api
-    env_file:
-      - ../.env
     environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      OPERATOR_USERNAME: ${OPERATOR_USERNAME:-operator}
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:?OPERATOR_PASSWORD is required}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-480}
       TELEMETRY_PATH: ${TELEMETRY_PATH:-/assets/v2/init}
+      ENROLLMENT_TOKEN_MINUTES: ${ENROLLMENT_TOKEN_MINUTES:-10}
+      TRAP_SECRET_OVERLAP_MINUTES: ${TRAP_SECRET_OVERLAP_MINUTES:-5}
+      HEALTH_TIMEOUT_SECONDS: ${HEALTH_TIMEOUT_SECONDS:-90}
+      HEALTH_SWEEP_INTERVAL_SECONDS: ${HEALTH_SWEEP_INTERVAL_SECONDS:-30}
+      SECURITY_DATA_RETENTION_DAYS: ${SECURITY_DATA_RETENTION_DAYS:-30}
+      AUDIT_ENTRY_RETENTION_DAYS: ${AUDIT_ENTRY_RETENTION_DAYS:-365}
+      RETENTION_SWEEP_INTERVAL_SECONDS: ${RETENTION_SWEEP_INTERVAL_SECONDS:-86400}
+      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-172.30.0.10}
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,8 +102,6 @@ services:
       dockerfile: center/collector/Dockerfile
     image: honeyforge/collector:dev
     container_name: hf-collector
-    env_file:
-      - ../.env
     depends_on:
       postgres:
         condition: service_healthy
@@ -149,10 +160,12 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./nginx/certs:/etc/nginx/certs:ro
+      - ${CENTER_TLS_CERT_FILE:-./nginx/certs/center.crt}:/etc/nginx/certs/center.crt:ro
+      - ${CENTER_TLS_KEY_FILE:-./nginx/certs/center.key}:/etc/nginx/certs/center.key:ro
     networks:
-      - mgmt_net
-      - edge_net
+      mgmt_net:
+        ipv4_address: 172.30.0.10
+      edge_net: {}
     read_only: true
     tmpfs:
       - /var/cache/nginx
@@ -176,6 +189,9 @@ networks:
   mgmt_net:
     name: honeyforge_mgmt_net
     internal: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
   edge_net:
     name: honeyforge_edge_net
     driver: bridge

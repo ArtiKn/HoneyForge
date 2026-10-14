@@ -6,12 +6,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN useradd --system --create-home --uid 10010 agent
+RUN useradd --system --create-home --uid 10010 honeyforge-agent
 
-COPY honeyforge_low.py profile_runtime.py main.py ./
+COPY agent/low/honeyforge_low.py agent/low/profile_runtime.py agent/low/main.py ./
+COPY honeyforge_common ./honeyforge_common
 
-RUN install -d -o agent -g agent /var/lib/honeyforge \
-    && chown -R agent:agent /app
-USER agent
+RUN install -d -o honeyforge-agent -g honeyforge-agent /var/lib/honeyforge \
+    && chown -R honeyforge-agent:honeyforge-agent /app
+USER honeyforge-agent
 
 CMD ["python", "main.py"]

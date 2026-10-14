@@ -25,3 +25,4 @@ pgdata/
 deploy/nginx/certs/*.crt
 deploy/nginx/certs/*.key
 deploy/nginx/certs/*.pem
+deploy/nginx/certs/*.srl

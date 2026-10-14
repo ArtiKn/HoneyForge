@@ -9,9 +9,9 @@ from typing import Any
 from uuid import UUID, uuid4
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from honeyforge_common.logging import redact_credentials
 
 log = logging.getLogger(__name__)
-
 
 class JsonLogFormatter(logging.Formatter):
     """Render Agent operational logs without serializing arbitrary input fields."""
@@ -22,7 +22,7 @@ class JsonLogFormatter(logging.Formatter):
         payload: dict[str, Any] = {
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": redact_credentials(record.getMessage()),
         }
         for field in self._safe_fields:
             if hasattr(record, field):

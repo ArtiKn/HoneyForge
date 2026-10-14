@@ -10,7 +10,10 @@ import asyncio
 import logging
 import signal
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+from center.logging import configure_logging
+
+
+configure_logging()
 log = logging.getLogger("collector")
 
 

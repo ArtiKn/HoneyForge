@@ -24,7 +24,7 @@ from profile_runtime import ProfileRuntime, TrapService, report_runtime_health
 log_handler = logging.StreamHandler()
 log_handler.setFormatter(JsonLogFormatter())
 logging.basicConfig(level=logging.INFO, handlers=[log_handler])
-log = logging.getLogger(os.getenv("PROCESS_NAME", "agent"))
+log = logging.getLogger("honeyforge-agent")
 
 
 async def run() -> None:
@@ -32,10 +32,11 @@ async def run() -> None:
 
     secret_file = Path(os.environ["TRAP_SECRET_FILE"])
     trap_secret = secret_file.read_text(encoding="utf-8").strip()
+    ca_file = os.getenv("CENTER_CA_FILE")
     client = AgentClient(
         os.environ["CENTER_URL"],
         trap_secret,
-        ca_file=Path(os.environ["CENTER_CA_FILE"]),
+        ca_file=Path(ca_file) if ca_file else None,
     )
     configuration = await client.fetch_configuration()
     if configuration["interaction_level"] != "low":

@@ -25,7 +25,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["agent*", "center*"]
+include = ["agent*", "center*", "honeyforge_common*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

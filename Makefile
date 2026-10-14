@@ -7,12 +7,15 @@ SHELL := /bin/bash
 COMPOSE      := docker compose --env-file .env
 CENTER_FILE  := -f deploy/docker-compose.yml
 HONEY_FILE   := -f deploy/docker-compose.honeypots.yml
+DEMO_FILE    := -f deploy/docker-compose.demo.yml
 
 CENTER := $(COMPOSE) $(CENTER_FILE)
-HONEY  := $(COMPOSE) $(HONEY_FILE)
+HONEY  := $(COMPOSE) $(HONEY_FILE) $(DEMO_FILE)
+HONEY_DISTRIBUTED := $(COMPOSE) $(HONEY_FILE)
 
 .PHONY: help env up down restart logs ps build config test certs \
-        honeypots-up honeypots-down honeypots-build honeypots-config clean
+        honeypots-up honeypots-down honeypots-build honeypots-config \
+        honeypots-distributed-config clean
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -59,6 +62,9 @@ honeypots-build: env ## Build honeypot images
 
 honeypots-config: env ## Validate deploy/docker-compose.honeypots.yml
 	$(HONEY) config -q
+
+honeypots-distributed-config: env ## Validate the separated DMZ topology
+	$(HONEY_DISTRIBUTED) config -q
 
 clean: env ## Stop the center and remove volumes (deletes the database)
 	$(CENTER) down -v

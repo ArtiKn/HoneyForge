@@ -1,0 +1,9 @@
+# Local-only overlay: resolve the masked Control Center hostname to this host.
+# Never apply this file on a separated DMZ host; use real DNS there.
+services:
+  agent-low:
+    extra_hosts:
+      - "assets.cdn-static.example:host-gateway"
+  agent-medium:
+    extra_hosts:
+      - "assets.cdn-static.example:host-gateway"

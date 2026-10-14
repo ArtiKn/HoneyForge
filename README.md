@@ -21,6 +21,7 @@
 
 - [Архитектура](docs/architecture.md) — компоненты, потоки, сетевая изоляция
 - [Схема БД](docs/database.md) — ER-диаграмма, таблицы, индексы, триггер NOTIFY
+- [Развёртывание](docs/deployment.md) — demo CA, разнесённая топология и smoke-проверка
 - [Сценарии демонстрации](docs/demo_attack.md) — атака → событие в центре
 
 ## Минимум для зачёта (Must)
@@ -50,3 +51,15 @@ python3 -m venv .venv
 Документация API будет доступна по адресу `http://localhost:8000/docs`,
 healthcheck — `GET /health`, readiness — `GET /ready`, endpoint телеметрии —
 `POST /assets/v2/init`.
+
+## Контейнерное развёртывание
+
+Локальная CA и серверный сертификат создаются командой `make certs`. Проверка
+сертификата Agent'ами обязательна; режима отключения TLS verification нет.
+Control Center и Traps запускаются одинаковыми образами как на одной машине,
+так и на отдельных хостах. Настройка сертификатов, доверенного proxy и внешний
+smoke test описаны в [руководстве по развёртыванию](docs/deployment.md).
+
+Локальные Traps запускаются `make honeypots-up`; команда автоматически
+подключает demo overlay. Base manifest без overlay предназначен для отдельного
+DMZ-хоста и проверяется `make honeypots-distributed-config`.

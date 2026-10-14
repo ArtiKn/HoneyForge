@@ -23,7 +23,6 @@ HoneyForge — распределённая платформа-ловушка, �
 | **Agent Low** | Слушатели портов + баннеры | DMZ |
 | **Agent Medium** | Fake SSH / HTTP / shell | DMZ |
 | **Honeytokens** (Bonus) | Генерация, размещение, детект | DMZ |
-| **Nginx (honeypot masking)** | Подмена URI телеметрии под CDN-статику | DMZ |
 
 ## 1.3. Потоки данных
 
@@ -44,8 +43,8 @@ Collector нормализует батч, дополняет geoip, пишет 
 | Сеть | Кто в ней | Доступ |
 |---|---|---|
 | `mgmt_net` (internal) | API ↔ Postgres ↔ Collector ↔ pg_listener | Наружу — нет |
-| `dmz_net` | Агенты ловушек ↔ Nginx маскировки | Только к `center:443` |
-| `public_net` | Nginx (center) ↔ Интернет | 443/tcp |
+| `agent_egress_net` | Исходящий management-трафик Agent | Только TLS к внешнему адресу Control Center |
+| `edge_net` | Nginx (center) ↔ Интернет | 443/tcp |
 | `honeypot_exposed` | Порты Low/Medium ловушек | Наружу открыты только эмулируемые порты (22, 80, 3306, …) |
 
 Агент **не знает** внутренних адресов БД, у него на руках только `AGENT_TOKEN` и URL маскированного endpoint'а.
@@ -56,7 +55,7 @@ Collector нормализует батч, дополняет geoip, пишет 
 |---|---|
 | Endpoint телеметрии | URI `/assets/v2/init`, `Content-Type: application/javascript` |
 | User-Agent агента | Под Chrome/Firefox (см. `channel.py`) |
-| Процесс на хосте | `install.sh` переименовывает `honeypot_agent.py` → `kworker/0:1` |
+| Процесс Agent | Не маскируется: непривилегированный пользователь и logger называются `honeyforge-agent` |
 | Тайминги beacon'а | jitter ±30% от интервала |
 | Баннеры сервисов | Реалистичные строки (OpenSSH_8.9, nginx/1.24.0, MySQL 8.0) |
 | Ответы fake-shell | Задержки как у настоящего bash |

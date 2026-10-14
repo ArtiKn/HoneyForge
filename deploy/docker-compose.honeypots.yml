@@ -1,33 +1,36 @@
-# Honeypot fleet skeleton: agent-low, agent-medium (task 6.2).
-# Separate host and dmz_net, isolated from the center (task 4.3).
+# Honeypot fleet: agent-low and agent-medium on a separated DMZ host.
+# The local demo adds docker-compose.demo.yml for host-gateway resolution.
 name: honeyforge-honeypots
 
 x-agent-common: &agent-common
   restart: unless-stopped
-  env_file:
-    - ../.env
   logging:
     driver: json-file
     options:
       max-size: "10m"
       max-file: "3"
-  security_opt:
-    - no-new-privileges:true
   read_only: true
   tmpfs:
     - /tmp
   cap_drop:
     - ALL
+  user: honeyforge-agent
   networks:
-    - dmz_net
+    - agent_egress_net
+    - honeypot_exposed
 
 services:
   agent-low:
     <<: *agent-common
     build:
-      context: ../agent/low
+      context: ..
+      dockerfile: agent/low/Dockerfile
     image: honeyforge/agent-low:dev
     container_name: hf-agent-low
+    networks:
+      agent_egress_net: {}
+      honeypot_exposed:
+        ipv4_address: 172.31.0.11
     environment:
       CENTER_URL: ${AGENT_CENTER_URL:-https://assets.cdn-static.example}
       TRAP_SECRET_FILE: /run/secrets/trap_secret
@@ -41,21 +44,19 @@ services:
       AGENT_VERSION: ${AGENT_VERSION:-0.1.0}
       HONEYPOT_ID: ${HONEYPOT_ID_LOW:-low-01}
       HONEYPOT_LEVEL: low
+      LISTEN_HOST: 172.31.0.11
       TELEMETRY_PATH: ${TELEMETRY_PATH:-/assets/v2/init}
       BEACON_INTERVAL_SECONDS: ${BEACON_INTERVAL_SECONDS:-60}
       BEACON_JITTER_SECONDS: ${BEACON_JITTER_SECONDS:-30}
-      PROCESS_NAME: ${PROCESS_NAME:-syslog-relay}
     secrets:
       - low_trap_secret
     volumes:
-      - ./nginx/certs/center.crt:/etc/honeyforge/center-ca.crt:ro
+      - ${CENTER_CA_CERT_FILE:-./nginx/certs/ca.crt}:/etc/honeyforge/center-ca.crt:ro
       - agent_low_data:/var/lib/honeyforge
     ports:
       - "${LOW_SSH_PORT:-2222}:${LOW_SSH_INTERNAL_PORT:-22}"
       - "${LOW_HTTP_PORT:-8080}:${LOW_HTTP_INTERNAL_PORT:-80}"
       - "${LOW_MYSQL_PORT:-33060}:${LOW_MYSQL_INTERNAL_PORT:-3306}"
-    extra_hosts:
-      - "assets.cdn-static.example:host-gateway"
     deploy:
       resources:
         limits:
@@ -69,6 +70,10 @@ services:
       dockerfile: agent/medium/Dockerfile
     image: honeyforge/agent-medium:dev
     container_name: hf-agent-medium
+    networks:
+      agent_egress_net: {}
+      honeypot_exposed:
+        ipv4_address: 172.31.0.12
     environment:
       CENTER_URL: ${AGENT_CENTER_URL:-https://assets.cdn-static.example}
       TRAP_SECRET_FILE: /run/secrets/medium_trap_secret
@@ -81,13 +86,11 @@ services:
       DELIVERY_INTERVAL_SECONDS: ${DELIVERY_INTERVAL_SECONDS:-1}
       HONEYPOT_ID: ${HONEYPOT_ID_MEDIUM:-medium-01}
       HONEYPOT_LEVEL: medium
-      PROCESS_NAME: ${PROCESS_NAME:-honeyforge-agent}
-    extra_hosts:
-      - "assets.cdn-static.example:host-gateway"
+      LISTEN_HOST: 172.31.0.12
     secrets:
       - medium_trap_secret
     volumes:
-      - ./nginx/certs/center.crt:/etc/honeyforge/center-ca.crt:ro
+      - ${CENTER_CA_CERT_FILE:-./nginx/certs/ca.crt}:/etc/honeyforge/center-ca.crt:ro
       - medium_agent_data:/var/lib/honeyforge
     ports:
       - "${MEDIUM_SSH_PORT:-2223}:${MEDIUM_SSH_INTERNAL_PORT:-22}"
@@ -99,9 +102,16 @@ services:
           memory: 192M
 
 networks:
-  dmz_net:
-    name: honeyforge_dmz_net
+  agent_egress_net:
+    name: honeyforge_agent_egress_net
     driver: bridge
+  honeypot_exposed:
+    name: honeyforge_honeypot_exposed
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
 
 volumes:
   agent_low_data:

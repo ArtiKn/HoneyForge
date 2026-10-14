@@ -23,7 +23,7 @@ from agent.low.profile_runtime import (
 )
 from agent.medium.http_service import HttpAttackSessionRegistry, MediumHttpService
 
-log = logging.getLogger(os.getenv("PROCESS_NAME", "honeyforge-agent"))
+log = logging.getLogger("honeyforge-agent")
 
 
 @dataclass
@@ -309,10 +309,11 @@ class MediumSshService:
 
 async def run() -> None:
     secret_file = Path(os.environ["TRAP_SECRET_FILE"])
+    ca_file = os.getenv("CENTER_CA_FILE")
     client = AgentClient(
         os.environ["CENTER_URL"],
         secret_file.read_text(encoding="utf-8").strip(),
-        ca_file=Path(os.environ["CENTER_CA_FILE"]),
+        ca_file=Path(ca_file) if ca_file else None,
     )
     configuration = await client.fetch_configuration()
     if configuration["interaction_level"] != "medium":

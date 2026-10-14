@@ -27,18 +27,89 @@ function renderEvent(event) {
   return item;
 }
 
-fetch('/api/v1/security-events', { credentials: 'same-origin' })
-  .then(response => {
-    if (response.status === 401) window.location.replace('/login.html');
-    if (!response.ok) throw new Error('Security Events unavailable');
-    return response.json();
-  })
+const stream = document.getElementById('event-stream');
+const emptyState = document.getElementById('empty-events');
+const seenEventIds = new Set();
+let reconnectDelay = 250;
+let activeSocket = null;
+
+function displayEvent(event) {
+  if (seenEventIds.has(event.id)) return false;
+  seenEventIds.add(event.id);
+  const item = renderEvent(event);
+  item.dataset.receivedAt = event.received_at;
+  item.dataset.eventId = event.id;
+  const receivedAt = Date.parse(event.received_at);
+  const nextItem = Array.from(stream.children).find(existing => {
+    const existingReceivedAt = Date.parse(existing.dataset.receivedAt);
+    return existingReceivedAt < receivedAt
+      || (existingReceivedAt === receivedAt && existing.dataset.eventId < event.id);
+  });
+  stream.insertBefore(item, nextItem || null);
+  emptyState.hidden = true;
+  return true;
+}
+
+async function fetchPage(url) {
+  const response = await fetch(url, { credentials: 'same-origin' });
+  if (response.status === 401) {
+    window.location.replace('/login.html');
+    throw new Error('Authentication required');
+  }
+  if (!response.ok) throw new Error('Security Events unavailable');
+  return response.json();
+}
+
+async function recoverGap(socket, bufferedEvents) {
+  let cursor = null;
+  do {
+    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+    const page = await fetchPage(`/api/v1/security-events${query}`);
+    page.items.forEach(event => displayEvent(event));
+    cursor = page.next_cursor;
+  } while (cursor && activeSocket === socket);
+  if (activeSocket !== socket) return;
+  const queued = bufferedEvents.splice(0);
+  queued.forEach(event => displayEvent(event));
+  return true;
+}
+
+function connectRealtime() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const socket = new WebSocket(`${protocol}//${location.host}/ws`);
+  const bufferedEvents = [];
+  let recovering = true;
+  activeSocket = socket;
+
+  socket.onopen = async () => {
+    reconnectDelay = 250;
+    try {
+      recovering = true;
+      if (await recoverGap(socket, bufferedEvents)) recovering = false;
+    } catch (_error) {
+      socket.close();
+    }
+  };
+  socket.onmessage = message => {
+    const event = JSON.parse(message.data);
+    if (recovering) bufferedEvents.push(event);
+    else displayEvent(event);
+  };
+  socket.onclose = () => {
+    if (activeSocket !== socket) return;
+    activeSocket = null;
+    window.setTimeout(connectRealtime, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 10000);
+  };
+  socket.onerror = () => socket.close();
+}
+
+fetchPage('/api/v1/security-events')
   .then(page => {
-    const events = page.items;
-    const stream = document.getElementById('event-stream');
-    events.forEach(event => stream.append(renderEvent(event)));
-    document.getElementById('empty-events').hidden = events.length > 0;
+    page.items.forEach(event => displayEvent(event));
+    emptyState.hidden = seenEventIds.size > 0;
+    connectRealtime();
   })
   .catch(() => {
-    document.getElementById('empty-events').textContent = 'Security Events unavailable.';
+    emptyState.textContent = 'Security Events unavailable.';
   });

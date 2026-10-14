@@ -19,7 +19,8 @@ from center.api.auth_dependencies import SESSION_COOKIE, require_operator
 from center.api.config import Settings, get_settings, validate_deployment_secrets
 from center.api.database import Database
 from center.api.operator_auth import operator_for_session, seed_operator
-from center.api.realtime.ws_manager import manager
+from center.api.realtime.pg_listener import SecurityEventRelay
+from center.api.realtime.ws_manager import ConnectionManager
 from center.api.routers import (
     agent,
     auth,
@@ -35,6 +36,10 @@ from center.api.trap_access import monitor_offline_traps
 def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or get_settings()
     database = Database(app_settings.database_url)
+    connections = ConnectionManager()
+    event_relay = SecurityEventRelay(
+        app_settings.database_url, connections, database.session_factory
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -44,6 +49,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app_settings.operator_username,
             app_settings.operator_password,
         )
+        await event_relay.start()
         health_monitor = asyncio.create_task(
             monitor_offline_traps(
                 database.session_factory,
@@ -54,6 +60,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            await event_relay.stop()
             health_monitor.cancel()
             with suppress(asyncio.CancelledError):
                 await health_monitor
@@ -66,6 +73,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     application.state.settings = app_settings
     application.state.database = database
+    application.state.connections = connections
+    application.state.event_relay = event_relay
     application.add_middleware(
         CORSMiddleware,
         allow_origins=app_settings.cors_origins,
@@ -145,12 +154,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if operator is None:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
-        await manager.connect(websocket)
+        if not await connections.connect(websocket):
+            return
         try:
             while True:
                 await websocket.receive_text()
         except WebSocketDisconnect:
-            manager.disconnect(websocket)
+            pass
+        finally:
+            connections.disconnect(websocket)
 
     return application
 

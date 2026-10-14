@@ -47,3 +47,11 @@ _Avoid_: Agent status, health flag
 **Agent Health Report**:
 Operational telemetry describing an Agent's liveness, active profile version, buffer state, and configuration errors; it is not attacker activity and therefore is not a Security Event.
 _Avoid_: Security Event, heartbeat event
+
+**Quarantined Event Record**:
+An Agent-side record that could not satisfy the Control Center's Security Event contract and is retained locally for diagnosis but never retried. Because it was rejected as invalid, it is not itself a Security Event.
+_Avoid_: Quarantined Security Event, failed event, dead-letter event
+
+**Buffer Loss Report**:
+Operational telemetry that counts Security Event records evicted by an Agent's bounded buffer, including their byte volume and loss interval. It remains pending until the Control Center acknowledges it and is not a Security Event.
+_Avoid_: Data-loss event, dropped-event log, Security Event

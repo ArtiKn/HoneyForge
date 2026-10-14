@@ -66,7 +66,7 @@ async def health(
     trap = await access.authenticate(_bearer(authorization))
     if trap is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
-    access.report_health(trap, **payload.model_dump())
+    access.report_health(trap, **payload.model_dump(mode="json"))
 
 
 @router.post("/rotate", response_model=RotationResponse)

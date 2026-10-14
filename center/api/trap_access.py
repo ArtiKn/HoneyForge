@@ -112,14 +112,20 @@ class TrapAccess:
         active_profile_version: int,
         buffer_depth: int,
         configuration_errors: list[str],
+        buffer_loss: dict[str, object] | None = None,
     ) -> None:
         trap.last_seen_at = self.now
         trap.agent_version = agent_version
-        trap.agent_meta = {
+        agent_meta = {
             "active_profile_version": active_profile_version,
             "buffer_depth": buffer_depth,
             "configuration_errors": configuration_errors,
         }
+        if buffer_loss is not None:
+            agent_meta["buffer_loss"] = buffer_loss
+        elif "buffer_loss" in trap.agent_meta:
+            agent_meta["buffer_loss"] = trap.agent_meta["buffer_loss"]
+        trap.agent_meta = agent_meta
         trap.status = "degraded" if configuration_errors else "online"
 
     async def mark_offline(self) -> int:

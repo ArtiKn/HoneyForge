@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from center.api.schemas.trap_profile import TrapServiceDefinition
 
@@ -40,11 +40,32 @@ class EnrollmentResponse(BaseModel):
     trap_secret: str
 
 
+class BufferLossReport(BaseModel):
+    dropped_events: int = Field(ge=1)
+    dropped_bytes: int = Field(ge=1)
+    first_dropped_at: datetime
+    last_dropped_at: datetime
+
+    @field_validator("first_dropped_at", "last_dropped_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("buffer loss timestamps must include a UTC offset")
+        return value
+
+    @model_validator(mode="after")
+    def require_ordered_interval(self) -> "BufferLossReport":
+        if self.last_dropped_at < self.first_dropped_at:
+            raise ValueError("buffer loss interval is reversed")
+        return self
+
+
 class AgentHealthReport(BaseModel):
     agent_version: str = Field(min_length=1, max_length=64)
     active_profile_version: int = Field(ge=1)
     buffer_depth: int = Field(ge=0)
     configuration_errors: list[str] = Field(default_factory=list, max_length=20)
+    buffer_loss: BufferLossReport | None = None
 
 
 class RotationResponse(BaseModel):

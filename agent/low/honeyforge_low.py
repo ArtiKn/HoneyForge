@@ -1,18 +1,49 @@
 import asyncio
 import json
+import logging
 import sqlite3
 import ssl
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+
+log = logging.getLogger(__name__)
+
+
+class JsonLogFormatter(logging.Formatter):
+    """Render Agent operational logs without serializing arbitrary input fields."""
+
+    _safe_fields = ("event_id", "event_bytes")
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, Any] = {
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        for field in self._safe_fields:
+            if hasattr(record, field):
+                payload[field] = getattr(record, field)
+        return json.dumps(payload, separators=(",", ":"))
 
 
 class EventQueue:
     """Durable FIFO for Security Events awaiting acknowledgement."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        max_events: int = 100_000,
+        max_bytes: int = 256 * 1024 * 1024,
+    ) -> None:
+        if max_events < 1 or max_bytes < 1:
+            raise ValueError("EventQueue limits must be positive")
+        self.max_events = max_events
+        self.max_bytes = max_bytes
         self.connection = sqlite3.connect(path)
         self.journal_mode = str(
             self.connection.execute("PRAGMA journal_mode=WAL").fetchone()[0]
@@ -22,18 +53,68 @@ class EventQueue:
             CREATE TABLE IF NOT EXISTS pending_events (
                 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_id TEXT NOT NULL UNIQUE,
-                body TEXT NOT NULL
+                body TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL
             )
             """
         )
-        self.connection.commit()
+        columns = {
+            row[1]
+            for row in self.connection.execute("PRAGMA table_info(pending_events)")
+        }
+        if "size_bytes" not in columns:
+            self.connection.execute(
+                "ALTER TABLE pending_events ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0"
+            )
+            for sequence, body in self.connection.execute(
+                "SELECT sequence, body FROM pending_events"
+            ):
+                self.connection.execute(
+                    "UPDATE pending_events SET size_bytes = ? WHERE sequence = ?",
+                    (len(body.encode()), sequence),
+                )
+        self.connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS quarantined_event_records (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT NOT NULL UNIQUE,
+                body TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                quarantined_at TEXT NOT NULL
+            )
+            """
+        )
+        self.connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS buffer_loss_reports (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                dropped_events INTEGER NOT NULL,
+                dropped_bytes INTEGER NOT NULL,
+                first_dropped_at TEXT NOT NULL,
+                last_dropped_at TEXT NOT NULL
+            )
+            """
+        )
+        self._pending_count, self._pending_bytes = self.connection.execute(
+            "SELECT count(*), coalesce(sum(size_bytes), 0) FROM pending_events"
+        ).fetchone()
+        with self.connection:
+            self._enforce_limits()
 
     def enqueue(self, event: dict[str, Any]) -> None:
+        body = json.dumps(event, separators=(",", ":"))
         with self.connection:
-            self.connection.execute(
-                "INSERT OR IGNORE INTO pending_events(event_id, body) VALUES (?, ?)",
-                (event["id"], json.dumps(event, separators=(",", ":"))),
+            inserted = self.connection.execute(
+                """
+                INSERT OR IGNORE INTO pending_events(event_id, body, size_bytes)
+                VALUES (?, ?, ?)
+                """,
+                (event["id"], body, len(body.encode())),
             )
+            if inserted.rowcount:
+                self._pending_count += 1
+                self._pending_bytes += len(body.encode())
+            self._enforce_limits()
 
     def pending(self, *, limit: int) -> list[dict[str, Any]]:
         rows = self.connection.execute(
@@ -41,18 +122,170 @@ class EventQueue:
         ).fetchall()
         return [json.loads(row[0]) for row in rows]
 
+    def pending_batch(
+        self, *, max_events: int = 500, max_bytes: int = 1024 * 1024
+    ) -> list[dict[str, Any]]:
+        """Return the oldest request-sized batch, quarantining unsendable records."""
+
+        events: list[dict[str, Any]] = []
+        request_bytes = len(b'{"events":[]}')
+        after_sequence = 0
+        while len(events) < max_events:
+            row = self.connection.execute(
+                """
+                SELECT sequence, event_id, body, size_bytes
+                FROM pending_events
+                WHERE sequence > ?
+                ORDER BY sequence LIMIT 1
+                """,
+                (after_sequence,),
+            ).fetchone()
+            if row is None:
+                break
+            sequence, event_id, body, event_bytes = row
+            after_sequence = sequence
+            separator_bytes = 1 if events else 0
+            candidate_bytes = request_bytes + event_bytes + separator_bytes
+            if candidate_bytes > max_bytes:
+                if not events:
+                    self.quarantine(
+                        event_id,
+                        f"record exceeds {max_bytes}-byte delivery request limit",
+                    )
+                    continue
+                break
+            events.append(json.loads(body))
+            request_bytes = candidate_bytes
+        return events
+
     def pending_count(self) -> int:
-        return int(
-            self.connection.execute("SELECT count(*) FROM pending_events").fetchone()[0]
-        )
+        return self._pending_count
 
     def acknowledge(self, event_ids: list[str]) -> None:
         if not event_ids:
             return
         with self.connection:
-            self.connection.executemany(
-                "DELETE FROM pending_events WHERE event_id = ?",
-                [(event_id,) for event_id in event_ids],
+            for event_id in event_ids:
+                row = self.connection.execute(
+                    "SELECT size_bytes FROM pending_events WHERE event_id = ?",
+                    (event_id,),
+                ).fetchone()
+                if row is None:
+                    continue
+                self.connection.execute(
+                    "DELETE FROM pending_events WHERE event_id = ?", (event_id,)
+                )
+                self._pending_count -= 1
+                self._pending_bytes -= row[0]
+
+    def quarantine(self, event_id: str, reason: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        with self.connection:
+            pending = self.connection.execute(
+                "SELECT size_bytes FROM pending_events WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+            if pending is None:
+                return
+            self.connection.execute(
+                """
+                INSERT OR IGNORE INTO quarantined_event_records(
+                    event_id, body, reason, quarantined_at
+                )
+                SELECT event_id, body, ?, ? FROM pending_events WHERE event_id = ?
+                """,
+                (reason, now, event_id),
+            )
+            self.connection.execute(
+                "DELETE FROM pending_events WHERE event_id = ?", (event_id,)
+            )
+            self._pending_count -= 1
+            self._pending_bytes -= pending[0]
+
+    def quarantined(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT body, reason FROM quarantined_event_records ORDER BY sequence
+            """
+        ).fetchall()
+        return [
+            {"event": json.loads(body), "reason": reason} for body, reason in rows
+        ]
+
+    def buffer_loss_report(self) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            """
+            SELECT dropped_events, dropped_bytes, first_dropped_at, last_dropped_at
+            FROM buffer_loss_reports WHERE singleton = 1
+            """
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "dropped_events": row[0],
+            "dropped_bytes": row[1],
+            "first_dropped_at": row[2],
+            "last_dropped_at": row[3],
+        }
+
+    def acknowledge_buffer_loss(self, report: dict[str, Any] | None = None) -> None:
+        with self.connection:
+            if report is None:
+                self.connection.execute(
+                    "DELETE FROM buffer_loss_reports WHERE singleton = 1"
+                )
+                return
+            self.connection.execute(
+                """
+                DELETE FROM buffer_loss_reports
+                WHERE singleton = 1
+                  AND dropped_events = ?
+                  AND dropped_bytes = ?
+                  AND last_dropped_at = ?
+                """,
+                (
+                    report["dropped_events"],
+                    report["dropped_bytes"],
+                    report["last_dropped_at"],
+                ),
+            )
+
+    def _enforce_limits(self) -> None:
+        while (
+            self._pending_count > self.max_events
+            or self._pending_bytes > self.max_bytes
+        ):
+            dropped = self.connection.execute(
+                """
+                SELECT sequence, event_id, size_bytes
+                FROM pending_events ORDER BY sequence LIMIT 1
+                """
+            ).fetchone()
+            if dropped is None:
+                return
+            sequence, event_id, event_bytes = dropped
+            self.connection.execute(
+                "DELETE FROM pending_events WHERE sequence = ?", (sequence,)
+            )
+            self._pending_count -= 1
+            self._pending_bytes -= event_bytes
+            now = datetime.now(UTC).isoformat()
+            self.connection.execute(
+                """
+                INSERT INTO buffer_loss_reports(
+                    singleton, dropped_events, dropped_bytes,
+                    first_dropped_at, last_dropped_at
+                ) VALUES (1, 1, ?, ?, ?)
+                ON CONFLICT(singleton) DO UPDATE SET
+                    dropped_events = dropped_events + 1,
+                    dropped_bytes = dropped_bytes + excluded.dropped_bytes,
+                    last_dropped_at = excluded.last_dropped_at
+                """,
+                (event_bytes, now, now),
+            )
+            log.warning(
+                "Security Event buffer overflow; oldest record removed",
+                extra={"event_id": event_id, "event_bytes": event_bytes},
             )
 
     def close(self) -> None:
@@ -81,24 +314,94 @@ class AgentClient:
         )
         return dict(json.loads(response.read()))
 
+    async def report_health(
+        self,
+        queue: EventQueue,
+        *,
+        agent_version: str,
+        active_profile_version: int,
+        configuration_errors: list[str],
+    ) -> None:
+        loss_report = queue.buffer_loss_report()
+        payload: dict[str, Any] = {
+            "agent_version": agent_version,
+            "active_profile_version": active_profile_version,
+            "buffer_depth": queue.pending_count(),
+            "configuration_errors": configuration_errors,
+        }
+        if loss_report is not None:
+            payload["buffer_loss"] = loss_report
+        request = Request(
+            f"{self.base_url}/assets/v2/health",
+            data=json.dumps(payload, separators=(",", ":")).encode(),
+            headers={
+                "Authorization": f"Bearer {self.trap_secret}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        await asyncio.to_thread(
+            urlopen, request, context=self.ssl_context, timeout=10
+        )
+        if loss_report is not None:
+            queue.acknowledge_buffer_loss(loss_report)
+
     async def deliver_pending(self, queue: EventQueue, *, limit: int = 500) -> int:
-        events = queue.pending(limit=limit)
+        events = queue.pending_batch(max_events=min(limit, 500))
         if not events:
             return 0
+        return await self._deliver_events(queue, events)
+
+    async def _deliver_events(
+        self, queue: EventQueue, events: list[dict[str, Any]]
+    ) -> int:
+        request_body = json.dumps(
+            {"events": events}, separators=(",", ":")
+        ).encode()
         request = Request(
             f"{self.base_url}/assets/v2/init",
-            data=json.dumps({"events": events}, separators=(",", ":")).encode(),
+            data=request_body,
             headers={
                 "Authorization": f"Bearer {self.trap_secret}",
                 "Content-Type": "application/javascript",
             },
             method="POST",
         )
-        response = await asyncio.to_thread(
-            urlopen, request, context=self.ssl_context, timeout=10
-        )
+        try:
+            response = await asyncio.to_thread(
+                urlopen, request, context=self.ssl_context, timeout=10
+            )
+        except HTTPError as exc:
+            if exc.code != 422:
+                raise
+            if len(events) > 1:
+                midpoint = len(events) // 2
+                first = await self._deliver_events(queue, events[:midpoint])
+                second = await self._deliver_events(queue, events[midpoint:])
+                return first + second
+            error_body = exc.read()
+            try:
+                detail = json.loads(error_body).get("detail", "invalid event")
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                detail = "invalid event"
+            reason = (
+                detail
+                if isinstance(detail, str)
+                else json.dumps(detail, separators=(",", ":"))
+            )
+            queue.quarantine(events[0]["id"], reason)
+            log.warning(
+                "Security Event record moved to quarantine",
+                extra={"event_id": events[0]["id"]},
+            )
+            return 0
         acknowledgement = json.loads(response.read())
-        accepted = list(acknowledgement["accepted"])
+        sent_ids = {event["id"] for event in events}
+        accepted = [
+            event_id
+            for event_id in acknowledgement["accepted"]
+            if event_id in sent_ids
+        ]
         queue.acknowledge(accepted)
         return len(accepted)
 

@@ -3,12 +3,14 @@ import json
 import os
 import shutil
 import socket
+import ssl
 import subprocess
 import sys
 import threading
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.error import URLError
 from uuid import uuid4
 
 import httpx
@@ -20,6 +22,7 @@ from agent.low.honeyforge_low import AgentClient, EventQueue, LowSshAgent
 from center.api.config import Settings
 from center.api.main import create_app
 from center.api.models import AttackSession, AuditEntry, SecurityEvent, Trap
+from tests.support import create_test_certificate
 
 
 pytestmark = pytest.mark.asyncio
@@ -208,6 +211,36 @@ async def test_health_reports_change_operational_state_without_security_events(
         "configuration_errors": [],
     }
     assert event_count == 0
+
+
+async def test_control_center_retains_the_latest_buffer_loss_report(
+    lifecycle_app, lifecycle_client
+) -> None:
+    created = await precreate_trap(lifecycle_client)
+    secret = await enroll_trap(lifecycle_client, created)
+    loss = {
+        "dropped_events": 12,
+        "dropped_bytes": 4096,
+        "first_dropped_at": "2026-10-14T12:00:00Z",
+        "last_dropped_at": "2026-10-14T12:01:00Z",
+    }
+
+    reported = await lifecycle_client.post(
+        "/assets/v2/health",
+        headers=authorization(secret),
+        json=health_report() | {"buffer_loss": loss},
+    )
+    next_health = await lifecycle_client.post(
+        "/assets/v2/health",
+        headers=authorization(secret),
+        json=health_report(),
+    )
+
+    assert reported.status_code == 204
+    assert next_health.status_code == 204
+    async with lifecycle_app.state.database.session_factory() as session:
+        trap = await session.get(Trap, created["id"])
+    assert trap.agent_meta["buffer_loss"] == loss
 
 
 async def test_rotation_has_five_minute_overlap_then_expires_old_secret(
@@ -632,10 +665,26 @@ async def test_black_box_low_ssh_interaction_reaches_operator_api(
     )
     assert seeded.status_code == 200
 
-    certificate = tmp_path / "center.crt"
-    private_key = tmp_path / "center.key"
-    _create_test_certificate(certificate, private_key)
+    certificate, private_key = create_test_certificate(tmp_path, name="center")
     api_port = _free_port()
+    configuration_response = await lifecycle_client.get(
+        "/assets/v2/config", headers=authorization(secret)
+    )
+    configuration = configuration_response.json()
+    service = configuration["services"][0]
+    queue = EventQueue(tmp_path / "black-box.sqlite3")
+    client = AgentClient(
+        f"https://127.0.0.1:{api_port}", secret, ca_file=certificate
+    )
+    agent = LowSshAgent(
+        trap_id=configuration["trap_id"],
+        host="127.0.0.1",
+        port=service["internal_port"],
+        banner=service["banner"],
+        queue=queue,
+        idle_timeout_seconds=1,
+    )
+    await agent.start()
     server = uvicorn.Server(
         uvicorn.Config(
             lifecycle_app,
@@ -647,29 +696,7 @@ async def test_black_box_low_ssh_interaction_reaches_operator_api(
             log_level="error",
         )
     )
-    server_task = asyncio.create_task(server.serve())
-    for _ in range(100):
-        if server.started:
-            break
-        await asyncio.sleep(0.01)
-    else:
-        raise AssertionError("test API did not start")
-
-    queue = EventQueue(tmp_path / "black-box.sqlite3")
-    client = AgentClient(
-        f"https://127.0.0.1:{api_port}", secret, ca_file=certificate
-    )
-    configuration = await client.fetch_configuration()
-    service = configuration["services"][0]
-    agent = LowSshAgent(
-        trap_id=configuration["trap_id"],
-        host="127.0.0.1",
-        port=service["internal_port"],
-        banner=service["banner"],
-        queue=queue,
-        idle_timeout_seconds=1,
-    )
-    await agent.start()
+    server_task: asyncio.Task | None = None
     try:
         ssh = await asyncio.create_subprocess_exec(
             "ssh",
@@ -689,12 +716,42 @@ async def test_black_box_low_ssh_interaction_reaches_operator_api(
             if queue.pending_count() == 2:
                 break
             await asyncio.sleep(0.01)
+
+        with pytest.raises(URLError):
+            await client.deliver_pending(queue)
+        assert queue.pending_count() == 2
+
+        server_task = asyncio.create_task(server.serve())
+        for _ in range(100):
+            if server.started:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("test API did not restart")
+
+        replayed_events = queue.pending(limit=10)
+        trusted_tls = ssl.create_default_context(cafile=certificate)
+        async with httpx.AsyncClient(
+            base_url=f"https://127.0.0.1:{api_port}", verify=trusted_tls
+        ) as network_client:
+            stored_without_local_ack = await network_client.post(
+                "/assets/v2/init",
+                headers={
+                    **authorization(secret),
+                    "Content-Type": "application/javascript",
+                },
+                json={"events": replayed_events},
+            )
+        assert stored_without_local_ack.status_code == 200
+        assert queue.pending_count() == 2
         assert await client.deliver_pending(queue) == 2
+        assert queue.pending_count() == 0
     finally:
         await agent.stop()
         queue.close()
-        server.should_exit = True
-        await server_task
+        if server_task is not None:
+            server.should_exit = True
+            await server_task
 
     response = await lifecycle_client.get(
         f"/api/v1/security-events?trap_id={created['id']}"
@@ -710,6 +767,13 @@ async def test_black_box_low_ssh_interaction_reaches_operator_api(
         "connection_closed",
     }
     assert len({event["attack_session_id"] for event in visible_events}) == 1
+    async with lifecycle_app.state.database.session_factory() as session:
+        event_count = await session.scalar(
+            select(func.count())
+            .select_from(SecurityEvent)
+            .where(SecurityEvent.trap_id == created["id"])
+        )
+    assert event_count == 102
     _assert_events_visible_in_browser(response.json()["items"])
 
 
@@ -717,31 +781,6 @@ def _free_port() -> int:
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         return int(listener.getsockname()[1])
-
-
-def _create_test_certificate(certificate: Path, private_key: Path) -> None:
-    subprocess.run(
-        [
-            "openssl",
-            "req",
-            "-x509",
-            "-newkey",
-            "rsa:2048",
-            "-nodes",
-            "-days",
-            "1",
-            "-keyout",
-            str(private_key),
-            "-out",
-            str(certificate),
-            "-subj",
-            "/CN=127.0.0.1",
-            "-addext",
-            "subjectAltName=IP:127.0.0.1",
-        ],
-        check=True,
-        capture_output=True,
-    )
 
 
 def _assert_events_visible_in_browser(events: list[dict]) -> None:

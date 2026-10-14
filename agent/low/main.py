@@ -9,9 +9,11 @@ from pathlib import Path
 from urllib.error import URLError
 from uuid import UUID
 
-from honeyforge_low import AgentClient, EventQueue, LowSshAgent
+from honeyforge_low import AgentClient, EventQueue, JsonLogFormatter, LowSshAgent
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log_handler = logging.StreamHandler()
+log_handler.setFormatter(JsonLogFormatter())
+logging.basicConfig(level=logging.INFO, handlers=[log_handler])
 log = logging.getLogger(os.getenv("PROCESS_NAME", "agent"))
 
 
@@ -34,7 +36,11 @@ async def run() -> None:
         if service["protocol"] == "ssh"
     )
     banner = ssh_service.get("banner") or "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.10"
-    queue = EventQueue(Path(os.environ["EVENT_QUEUE_PATH"]))
+    queue = EventQueue(
+        Path(os.environ["EVENT_QUEUE_PATH"]),
+        max_events=int(os.getenv("EVENT_QUEUE_MAX_EVENTS", "100000")),
+        max_bytes=int(os.getenv("EVENT_QUEUE_MAX_BYTES", str(256 * 1024 * 1024))),
+    )
     agent = LowSshAgent(
         trap_id=UUID(configuration["trap_id"]),
         host=os.getenv("LISTEN_HOST", "0.0.0.0"),
@@ -44,13 +50,29 @@ async def run() -> None:
     )
     await agent.start()
     log.info("Low SSH Trap started on port %s", agent.port)
+    health_interval = float(os.getenv("HEALTH_INTERVAL_SECONDS", "30"))
+    delivery_interval = float(os.getenv("DELIVERY_INTERVAL_SECONDS", "1"))
+    next_health_at = 0.0
     try:
         while True:
             try:
                 await client.deliver_pending(queue)
             except (OSError, URLError, ValueError):
                 log.exception("Security Event delivery failed; events remain queued")
-            await asyncio.sleep(1)
+            now = asyncio.get_running_loop().time()
+            if now >= next_health_at:
+                try:
+                    await client.report_health(
+                        queue,
+                        agent_version=os.getenv("AGENT_VERSION", "0.1.0"),
+                        active_profile_version=configuration["profile_version"],
+                        configuration_errors=[],
+                    )
+                except (OSError, URLError, ValueError):
+                    log.exception("Agent Health Report delivery failed")
+                else:
+                    next_health_at = now + health_interval
+            await asyncio.sleep(delivery_interval)
     finally:
         await agent.stop()
         queue.close()

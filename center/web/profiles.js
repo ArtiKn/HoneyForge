@@ -1,3 +1,5 @@
+import { canManage, loadOperator } from './operator.js';
+
 const api = '/api/v1/trap-profiles';
 const form = document.querySelector('#profile-form');
 const list = document.querySelector('#profile-list');
@@ -9,6 +11,7 @@ const notice = document.querySelector('#notice');
 const removeButton = document.querySelector('#remove-profile');
 let profiles = [];
 let selected = null;
+let canWrite = true;
 
 function addService(value = {}) {
   const row = template.content.firstElementChild.cloneNode(true);
@@ -140,15 +143,20 @@ function selectProfile(profile) {
   form.elements.user_agent.value = masking.user_agent || '';
   document.querySelector('#editor-title').textContent = profile.name;
   document.querySelector('#version-label').textContent = `Version ${profile.version}`;
-  removeButton.hidden = false;
+  const locked = profile.is_archived || !canWrite;
+  removeButton.hidden = !canWrite;
   removeButton.disabled = profile.is_archived;
-  form.querySelector('[type="submit"]').disabled = profile.is_archived;
-  document.querySelector('#add-service').disabled = profile.is_archived;
-  document.querySelector('#add-credential').disabled = profile.is_archived;
+  form.querySelector('[type="submit"]').disabled = locked;
+  document.querySelector('#add-service').disabled = locked;
+  document.querySelector('#add-credential').disabled = locked;
   [...form.elements].forEach(control => {
-    if (control !== removeButton) control.disabled = profile.is_archived;
+    if (control !== removeButton) control.disabled = locked;
   });
-  notice.textContent = profile.is_archived ? 'Archived Trap Profiles remain readable for historical context.' : '';
+  if (!canWrite) {
+    notice.textContent = 'Read-only Operator: your role cannot change Trap Profiles.';
+  } else {
+    notice.textContent = profile.is_archived ? 'Archived Trap Profiles remain readable for historical context.' : '';
+  }
   notice.className = 'notice';
   renderList();
 }
@@ -164,11 +172,11 @@ function newProfile() {
   document.querySelector('#version-label').textContent = 'Not saved';
   removeButton.hidden = true;
   removeButton.disabled = false;
-  form.querySelector('[type="submit"]').disabled = false;
-  document.querySelector('#add-service').disabled = false;
-  document.querySelector('#add-credential').disabled = false;
-  [...form.elements].forEach(control => { control.disabled = false; });
-  notice.textContent = '';
+  form.querySelector('[type="submit"]').disabled = !canWrite;
+  document.querySelector('#add-service').disabled = !canWrite;
+  document.querySelector('#add-credential').disabled = !canWrite;
+  [...form.elements].forEach(control => { control.disabled = !canWrite; });
+  notice.textContent = canWrite ? '' : 'Read-only Operator: your role cannot change Trap Profiles.';
   notice.className = 'notice';
   renderList();
   form.elements.name.focus();
@@ -185,6 +193,7 @@ async function loadProfiles(preferredId = selected?.id) {
 
 form.addEventListener('submit', async event => {
   event.preventDefault();
+  if (!canWrite) return;
   notice.textContent = 'Saving…';
   notice.className = 'notice';
   try {
@@ -210,6 +219,7 @@ form.addEventListener('submit', async event => {
 });
 
 removeButton.addEventListener('click', async () => {
+  if (!canWrite) return;
   if (!selected || !window.confirm(`Delete or archive “${selected.name}”?`)) return;
   try {
     await request(`${api}/${selected.id}`, {
@@ -239,7 +249,16 @@ document.querySelector('#logout').addEventListener('click', async () => {
 });
 
 newProfile();
-loadProfiles().catch(error => {
-  notice.textContent = error.message;
-  notice.className = 'notice error';
-});
+loadOperator()
+  .then(operator => {
+    canWrite = canManage(operator);
+    document.querySelector('#new-profile').disabled = !canWrite;
+    if (selected) selectProfile(selected); else newProfile();
+  })
+  .catch(() => {})
+  .finally(() => {
+    loadProfiles().catch(error => {
+      notice.textContent = error.message;
+      notice.className = 'notice error';
+    });
+  });

@@ -16,11 +16,16 @@ from fastapi import FastAPI
 
 from center.api.config import Settings
 from center.api.main import create_app
+from center.api.models import Operator
+from center.api.operator_auth import hash_password
 from tests.support import run_migrations
 
 TEST_JWT_SECRET = "test-secret-that-is-long-enough"
 TEST_OPERATOR_USERNAME = "operator"
 TEST_OPERATOR_PASSWORD = "correct horse battery staple"
+TEST_OPERATOR_ROLE = "admin"
+TEST_VIEWER_USERNAME = "viewer"
+TEST_VIEWER_PASSWORD = "read only battery staple"
 TEST_ORIGIN = "https://test"
 
 
@@ -47,10 +52,29 @@ def build_settings(database_url: str, **overrides: object) -> Settings:
         "jwt_secret": TEST_JWT_SECRET,
         "operator_username": TEST_OPERATOR_USERNAME,
         "operator_password": TEST_OPERATOR_PASSWORD,
+        "operator_role": TEST_OPERATOR_ROLE,
         "cors_origins": [TEST_ORIGIN],
     }
     values.update(overrides)
     return Settings(**values)
+
+
+async def create_operator(
+    application: FastAPI, username: str, password: str, role: str
+) -> None:
+    """Insert an additional Operator with an explicit role for RBAC tests."""
+
+    async with application.state.database.session_factory() as session:
+        session.add(
+            Operator(
+                username=username,
+                password_hash=hash_password(password),
+                role=role,
+                is_active=True,
+                session_version=0,
+            )
+        )
+        await session.commit()
 
 
 @pytest.fixture
@@ -92,6 +116,27 @@ async def operator_client(anonymous_client: httpx.AsyncClient) -> AsyncIterator[
         json={
             "username": TEST_OPERATOR_USERNAME,
             "password": TEST_OPERATOR_PASSWORD,
+        },
+    )
+    assert login.status_code == 204
+    yield anonymous_client
+
+
+@pytest.fixture
+async def viewer_client(
+    anonymous_client: httpx.AsyncClient, postgres_application: FastAPI
+) -> AsyncIterator[httpx.AsyncClient]:
+    """An API client authenticated as a read-only Operator."""
+
+    await create_operator(
+        postgres_application, TEST_VIEWER_USERNAME, TEST_VIEWER_PASSWORD, "viewer"
+    )
+    login = await anonymous_client.post(
+        "/api/v1/auth/login",
+        headers={"Origin": TEST_ORIGIN},
+        json={
+            "username": TEST_VIEWER_USERNAME,
+            "password": TEST_VIEWER_PASSWORD,
         },
     )
     assert login.status_code == 204

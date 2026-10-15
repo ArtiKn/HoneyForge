@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from center.api.auth_dependencies import CurrentOperator
+from center.api.auth_dependencies import AdminOperator
 from center.api.database import get_db
 from center.api.models import AuditEntry, Trap, TrapProfile
 from center.api.schemas.trap_profile import (
@@ -30,7 +30,7 @@ async def ping() -> dict[str, str]:
 )
 async def create_trap_profile(
     payload: TrapProfileCreate,
-    operator: CurrentOperator,
+    operator: AdminOperator,
     request: Request,
     response: Response,
     session: Annotated[AsyncSession, Depends(get_db)],
@@ -100,7 +100,7 @@ async def read_trap_profile(
 async def update_trap_profile(
     trap_profile_id: UUID,
     payload: TrapProfileUpdate,
-    operator: CurrentOperator,
+    operator: AdminOperator,
     request: Request,
     response: Response,
     session: Annotated[AsyncSession, Depends(get_db)],
@@ -176,7 +176,7 @@ def _parse_etag(value: str | None) -> int:
 @router.delete("/{trap_profile_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_or_archive_trap_profile(
     trap_profile_id: UUID,
-    operator: CurrentOperator,
+    operator: AdminOperator,
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
     if_match: Annotated[str | None, Header()] = None,

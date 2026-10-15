@@ -9,5 +9,5 @@ erDiagram
     TRAPS { uuid id PK text name uuid trap_profile_id FK text status bool is_archived timestamptz last_seen_at }
     ATTACK_SESSIONS { uuid id PK uuid trap_id FK inet source_ip timestamptz started_at timestamptz ended_at text protocol jsonb metadata }
     SECURITY_EVENTS { uuid id PK int schema_version uuid trap_id FK uuid attack_session_id FK text event_type timestamptz observed_at timestamptz received_at inet source_ip int target_port jsonb payload }
-    OPERATORS { uuid id PK text username UK text password_hash bool is_active }
+    OPERATORS { uuid id PK text username UK text password_hash text role bool is_active }
     AUDIT_ENTRIES { bigserial id PK uuid operator_id FK text action text entity uuid entity_id jsonb details inet source_ip timestamptz created_at }

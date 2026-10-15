@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from center.api.auth_dependencies import CurrentOperator
+from center.api.auth_dependencies import AdminOperator
 from center.api.database import get_db
 from center.api.models import AuditEntry, AttackSession, SecurityEvent, Trap, TrapProfile
 from center.api.schemas.trap import (
@@ -28,7 +28,7 @@ async def ping() -> dict[str, str]:
 @router.post("", response_model=TrapProvisioned, status_code=status.HTTP_201_CREATED)
 async def create_trap(
     payload: TrapCreate,
-    operator: CurrentOperator,
+    operator: AdminOperator,
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> TrapProvisioned:
@@ -84,7 +84,7 @@ async def read_trap(
 async def update_trap(
     trap_id: UUID,
     payload: TrapUpdate,
-    operator: CurrentOperator,
+    operator: AdminOperator,
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> Trap:
@@ -139,7 +139,7 @@ async def update_trap(
 @router.post("/{trap_id}/start", response_model=TrapRead)
 async def start_trap(
     trap_id: UUID,
-    operator: CurrentOperator,
+    operator: AdminOperator,
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> Trap:
@@ -153,7 +153,7 @@ async def start_trap(
 @router.post("/{trap_id}/stop", response_model=TrapRead)
 async def stop_trap(
     trap_id: UUID,
-    operator: CurrentOperator,
+    operator: AdminOperator,
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> Trap:
@@ -167,7 +167,7 @@ async def stop_trap(
 @router.post("/{trap_id}/archive", response_model=TrapRead)
 async def archive_trap(
     trap_id: UUID,
-    operator: CurrentOperator,
+    operator: AdminOperator,
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> Trap:
@@ -183,7 +183,7 @@ async def archive_trap(
 @router.delete("/{trap_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_or_archive_trap(
     trap_id: UUID,
-    operator: CurrentOperator,
+    operator: AdminOperator,
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
@@ -248,7 +248,7 @@ def _profile_change(trap: Trap, requested: UUID | None) -> UUID | None:
 @router.post("/{trap_id}/revoke", response_model=TrapRead)
 async def revoke_trap(
     trap_id: UUID,
-    operator: CurrentOperator,
+    operator: AdminOperator,
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> Trap:
@@ -264,7 +264,7 @@ async def revoke_trap(
 @router.post("/{trap_id}/enrollment-token", response_model=EnrollmentTokenResponse)
 async def reissue_enrollment_token(
     trap_id: UUID,
-    operator: CurrentOperator,
+    operator: AdminOperator,
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> EnrollmentTokenResponse:

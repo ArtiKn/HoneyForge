@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 
+import httpx
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -8,6 +9,11 @@ from center.api.config import Settings
 from center.api.main import create_app
 from center.api.models import AuditEntry, Operator
 from center.api.operator_auth import verify_password
+from tests.conftest import (
+    TEST_OPERATOR_PASSWORD,
+    TEST_OPERATOR_USERNAME,
+    build_settings,
+)
 
 
 pytestmark = pytest.mark.asyncio
@@ -48,6 +54,10 @@ async def test_operator_can_login_reach_dashboard_and_logout(auth_app, auth_clie
     assert dashboard.status_code == 200
     assert dashboard.json() == {"operator": "operator"}
 
+    identity = await auth_client.get("/api/v1/auth/me")
+    assert identity.status_code == 200
+    assert identity.json() == {"username": "operator", "role": "admin"}
+
     logout = await auth_client.post(
         "/api/v1/auth/logout", headers={"Origin": "https://test"}
     )
@@ -64,6 +74,7 @@ async def test_operator_can_login_reach_dashboard_and_logout(auth_app, auth_clie
         )
     assert operators == 1
     assert operator is not None
+    assert operator.role == "admin"
     assert operator.password_hash != "correct horse battery staple"
     assert verify_password("correct horse battery staple", operator.password_hash)
     assert audit_actions == ["operator.login.succeeded", "operator.logout"]
@@ -95,6 +106,39 @@ async def test_state_changes_reject_untrusted_origins(auth_client) -> None:
         json={"username": "operator", "password": "correct horse battery staple"},
     )
     assert response.status_code == 403
+
+
+async def test_identity_endpoint_requires_authentication(auth_client) -> None:
+    response = await auth_client.get("/api/v1/auth/me")
+
+    assert response.status_code == 401
+
+
+async def test_seeded_operator_role_comes_from_settings(
+    migrated_database_url,
+) -> None:
+    application = create_app(
+        build_settings(migrated_database_url, operator_role="viewer")
+    )
+    transport = httpx.ASGITransport(app=application)
+    async with application.router.lifespan_context(application):
+        async with httpx.AsyncClient(
+            transport=transport, base_url="https://test"
+        ) as client:
+            login = await client.post(
+                "/api/v1/auth/login",
+                headers={"Origin": "https://test"},
+                json={
+                    "username": TEST_OPERATOR_USERNAME,
+                    "password": TEST_OPERATOR_PASSWORD,
+                },
+            )
+            identity = await client.get("/api/v1/auth/me")
+    assert login.status_code == 204
+    assert identity.json() == {
+        "username": TEST_OPERATOR_USERNAME,
+        "role": "viewer",
+    }
 
 
 async def test_health_and_readiness_have_distinct_meanings(auth_client) -> None:

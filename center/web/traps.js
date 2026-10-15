@@ -1,3 +1,5 @@
+import { canManage, loadOperator } from './operator.js';
+
 const api = '/api/v1/traps';
 const profilesApi = '/api/v1/trap-profiles';
 const form = document.querySelector('#trap-form');
@@ -7,6 +9,7 @@ const tokenLabel = document.querySelector('#enrollment-token');
 const profileSelect = form.elements.trap_profile_id;
 let traps = [];
 let profiles = [];
+let canWrite = true;
 
 function statusLabel(status) {
   return status.charAt(0).toUpperCase() + status.slice(1);
@@ -84,7 +87,9 @@ function renderTable() {
     const actions = document.createElement('td');
     actions.className = 'trap-actions';
     const terminal = trap.is_archived || trap.status === 'revoked';
-    if (!terminal) {
+    if (!canWrite) {
+      actions.textContent = 'View only';
+    } else if (!terminal) {
       actions.append(
         actionButton('Start', 'trap-start', trap, current => act(`${api}/${current.id}/start`)),
         actionButton('Stop', 'secondary trap-stop', trap, current => act(`${api}/${current.id}/stop`)),
@@ -159,6 +164,7 @@ async function archive(trap) {
 
 form.addEventListener('submit', async event => {
   event.preventDefault();
+  if (!canWrite) return;
   notice.textContent = 'Registering…';
   notice.className = 'notice';
   tokenLabel.textContent = '';
@@ -194,11 +200,24 @@ document.querySelector('#logout').addEventListener('click', async () => {
   window.location.replace('/login.html');
 });
 
-fetch('/api/v1/dashboard', { credentials: 'same-origin' })
-  .then(response => (response.ok ? response.json() : null))
-  .then(dashboard => {
-    if (dashboard) document.querySelector('#operator').textContent = `Operator: ${dashboard.operator}`;
-  })
-  .catch(() => {});
+async function applyOperator(operator) {
+  canWrite = canManage(operator);
+  const label = document.querySelector('#operator');
+  if (label && operator) {
+    label.textContent = `Operator: ${operator.username} (${operator.role})`;
+  }
+  if (!canWrite) {
+    [...form.elements].forEach(control => {
+      control.disabled = true;
+    });
+    notice.textContent = 'Read-only Operator: your role cannot register or change Traps.';
+    notice.className = 'notice';
+  }
+}
 
-Promise.all([loadProfiles(), loadTraps()]).catch(reportError);
+loadOperator()
+  .then(operator => {
+    applyOperator(operator);
+    return Promise.all([loadProfiles(), loadTraps()]);
+  })
+  .catch(reportError);

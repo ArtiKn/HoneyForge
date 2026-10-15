@@ -49,6 +49,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             database.session_factory,
             app_settings.operator_username,
             app_settings.operator_password,
+            app_settings.operator_role,
         )
         await event_relay.start()
         health_monitor = asyncio.create_task(

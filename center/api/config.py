@@ -1,6 +1,7 @@
 """Control API settings (task 2.1)."""
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -37,6 +38,9 @@ class Settings(BaseSettings):
     operator_username: str = Field(default="operator", validation_alias="OPERATOR_USERNAME")
     operator_password: str = Field(
         default="change-me-in-production", validation_alias="OPERATOR_PASSWORD"
+    )
+    operator_role: Literal["admin", "viewer"] = Field(
+        default="admin", validation_alias="OPERATOR_ROLE"
     )
     enrollment_token_minutes: int = Field(
         default=10, validation_alias="ENROLLMENT_TOKEN_MINUTES"

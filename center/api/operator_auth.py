@@ -17,6 +17,7 @@ SCRYPT_N = 2**14
 SCRYPT_R = 8
 SCRYPT_P = 1
 SESSION_ISSUER = "honeyforge-control-center"
+ROLE_ADMIN = "admin"
 DUMMY_PASSWORD_HASH = "$".join(
     (
         PASSWORD_SCHEME,
@@ -110,24 +111,29 @@ def read_session_claims(token: str, secret: str) -> tuple[UUID, int] | None:
 
 
 async def seed_operator(
-    session_factory: async_sessionmaker[AsyncSession], username: str, password: str
+    session_factory: async_sessionmaker[AsyncSession],
+    username: str,
+    password: str,
+    role: str = ROLE_ADMIN,
 ) -> None:
     async with session_factory() as session:
-        operator = await session.scalar(select(Operator).limit(1))
+        operator = await session.scalar(
+            select(Operator).where(Operator.username == username)
+        )
         if operator is None:
             operator = Operator(
                 username=username,
                 password_hash=hash_password(password),
-                role="operator",
+                role=role,
                 is_active=True,
                 session_version=0,
             )
             session.add(operator)
         else:
-            operator.username = username
             if not verify_password(password, operator.password_hash):
                 operator.password_hash = hash_password(password)
                 operator.session_version += 1
+            operator.role = role
         await session.commit()
 
 

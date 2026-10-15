@@ -7,7 +7,7 @@ from center.api.auth_dependencies import CurrentOperator, SESSION_COOKIE
 from center.api.database import get_db
 from center.api.models import AuditEntry
 from center.api.operator_auth import authenticate, create_session_token
-from center.api.schemas.auth import LoginRequest
+from center.api.schemas.auth import LoginRequest, MeResponse
 
 router = APIRouter()
 
@@ -15,6 +15,13 @@ router = APIRouter()
 @router.get("/ping")
 async def ping() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/me", response_model=MeResponse)
+async def me(operator: CurrentOperator) -> MeResponse:
+    """Describe the authenticated Operator so the UI can gate mutations."""
+
+    return MeResponse(username=operator.username, role=operator.role)
 
 
 @router.post("/login", status_code=status.HTTP_204_NO_CONTENT)

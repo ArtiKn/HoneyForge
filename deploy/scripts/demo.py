@@ -61,6 +61,7 @@ def ensure_demo_env(path: Path = ENV_FILE) -> dict[str, str]:
     if values.get("CENTER_URL") in {None, "", "https://localhost", "https://localhost:443"}:
         values["CENTER_URL"] = f"https://localhost:{values['CENTER_HTTPS_PORT']}"
     values.setdefault("OPERATOR_USERNAME", "operator")
+    values.setdefault("OPERATOR_ROLE", "admin")
     if values.get("LOW_TRAP_SECRET_FILE", "").startswith("./secrets/"):
         values["LOW_TRAP_SECRET_FILE"] = values["LOW_TRAP_SECRET_FILE"].replace(
             "./secrets/", "../secrets/", 1

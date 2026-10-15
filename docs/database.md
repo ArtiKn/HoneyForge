@@ -100,6 +100,9 @@ erDiagram
   (интервалы и джиттер beacon'ов, `user_agent`). Control Center выдаёт их Agent
   через `GET /assets/v2/config`; Agent применяет `decoy_credentials`, `logging`
   и `emulator_settings` (`response_delay_ms`, `max_attempts`).
+- `Operator.role` — `admin` (полный доступ) или `viewer` (только чтение).
+  Разграничение доступа (FR-C5) применяется на всех изменяющих операциях API;
+  запрещённая попытка сохраняется в `audit_entries` как `operator.access.denied`.
 - Security data хранится `SECURITY_DATA_RETENTION_DAYS` (30 дней по умолчанию),
   audit entries — `AUDIT_ENTRY_RETENTION_DAYS` (365 дней); фоновая очистка
   запускается каждые `RETENTION_SWEEP_INTERVAL_SECONDS` (сутки по умолчанию).
@@ -119,5 +122,5 @@ erDiagram
 | `traps` | Реестр развёрнутых Trap и их Trap Status |
 | `attack_sessions` | Группировка связанных Security Events |
 | `security_events` | Нормализованные наблюдения активности атакующего |
-| `operators` | Аутентифицированные Operator |
+| `operators` | Аутентифицированные Operator и их роль (`admin`/`viewer`) |
 | `audit_entries` | Изменяемые Operator действия, требующие аудита |

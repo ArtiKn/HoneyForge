@@ -31,7 +31,7 @@ One connection forms one Attack Session for SSH and other connection-oriented pr
 
 ## Identity and authentication
 
-The MVP has one seeded Operator and no registration, RBAC, or user-management UI. Login creates an eight-hour JWT session in a `Secure`, `HttpOnly`, `SameSite=Strict` cookie. WebSocket authentication uses the same cookie, and state-changing requests validate their origin.
+The MVP seeds one Admin Operator and no registration or user-management UI. An Operator has a role: `admin` holds full access, while `viewer` is read-only. Every state-changing Operator endpoint requires `admin`; a forbidden attempt is audited as `operator.access.denied`. `GET /api/v1/auth/me` reports the authenticated username and role, and the UI hides mutation controls from a `viewer`. Login creates an eight-hour JWT session in a `Secure`, `HttpOnly`, `SameSite=Strict` cookie. WebSocket authentication uses the same cookie, and state-changing requests validate their origin.
 
 An Operator pre-creates a Trap and issues a hashed, single-use Enrollment Token valid for ten minutes. The Agent exchanges it for a unique Trap Secret, of which the Control Center stores only a hash. Rotation permits a five-minute overlap; revocation has immediate effect. Agent secrets are mounted as protected files and are not built into images or exposed in process arguments. TLS is mandatory and certificate verification cannot be disabled. mTLS remains Bonus.
 
@@ -55,7 +55,7 @@ Operator endpoints live under `/api/v1`. Authenticated Agent endpoints are expos
 
 Event queries filter by Trap, Attack Session, event type, source IP, and UTC time range and use cursor pagination. Telemetry ingestion is an API application module and commits normalized events in one database transaction. PostgreSQL `LISTEN/NOTIFY` publishes only committed event UUIDs; listeners load full rows and broadcast them through authenticated WebSockets. Reconnecting clients recover missed records through REST before resuming the live stream.
 
-API documentation is enabled only in development. Login, mutation, enrollment, revocation, and export actions are audited; ordinary reads are not.
+API documentation is enabled only in development. Login, mutation, enrollment, revocation, export, and forbidden actions are audited; ordinary reads are not.
 
 ## User interface
 

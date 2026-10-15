@@ -116,14 +116,20 @@ def test_deployment_manifests_express_runtime_security_boundaries() -> None:
     assert center["services"]["collector"].get("environment", {}) == {}
     assert "POSTGRES_PASSWORD" not in center["services"]["api"]["environment"]
     for name, service in honeypots["services"].items():
-        assert service["user"] == "honeyforge-agent"
+        assert service["user"] == "syslog-relay"
+        assert service["environment"]["SERVICE_KEY_FILE"] == "/run/secrets/relay.key"
+        visible = [service["user"], service["image"], service["container_name"],
+                   service["environment"]["EVENT_QUEUE_PATH"],
+                   *(volume["target"] for volume in service["volumes"])]
+        for value in visible:
+            assert not any(marker in value.lower() for marker in ("honey", "agent", "trap", "decoy"))
         assert service["read_only"] is True
         assert "ALL" in service["cap_drop"]
         assert service["deploy"]["resources"]["limits"]
-        assert set(service["networks"]) == {"agent_egress_net", "honeypot_exposed"}
-        exposed_address = service["networks"]["honeypot_exposed"]["ipv4_address"]
+        assert set(service["networks"]) == {"relay_egress_net", "service_net"}
+        exposed_address = service["networks"]["service_net"]["ipv4_address"]
         assert service["environment"]["LISTEN_HOST"] == exposed_address
-        assert service["environment"]["CENTER_CA_FILE"] == "/etc/honeyforge/center-ca.crt"
+        assert service["environment"]["CENTER_CA_FILE"] == "/etc/syslog-relay/center-ca.crt"
         masked_name = service["environment"]["PROCESS_MASK_NAME"]
         assert masked_name == "syslog-relay"
         assert not any(
@@ -132,12 +138,12 @@ def test_deployment_manifests_express_runtime_security_boundaries() -> None:
         )
         assert "extra_hosts" not in service
         writable_targets = {volume["target"] for volume in service["volumes"]}
-        assert "/var/lib/honeyforge" in writable_targets
+        assert "/var/lib/syslog-relay" in writable_targets
         assert "assets.cdn-static.example=host-gateway" in demo_honeypots[
             "services"
         ][name]["extra_hosts"]
-    assert honeypots["networks"]["honeypot_exposed"]["internal"] is True
-    assert not honeypots["networks"]["agent_egress_net"].get("internal", False)
+    assert honeypots["networks"]["service_net"]["internal"] is True
+    assert not honeypots["networks"]["relay_egress_net"].get("internal", False)
 
 
 def test_nginx_masks_agent_api_and_enforces_proxy_limits() -> None:

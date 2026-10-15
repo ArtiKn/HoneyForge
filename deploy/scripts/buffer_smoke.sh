@@ -7,13 +7,13 @@ COMPOSE=(docker compose --env-file .env -f deploy/docker-compose.yml)
 DEMO=(docker run --rm --network host --user "$(id -u):$(id -g)" -v "$(pwd)":/workspace -w /workspace python:3.12-slim python deploy/scripts/demo.py)
 
 queue_depth() {
-  docker exec hf-agent-low python -c \
-    'import sqlite3; print(sqlite3.connect("/var/lib/honeyforge/events.sqlite3").execute("select count(*) from pending_events").fetchone()[0])'
+  docker exec syslog-relay-a python -c \
+    'import sqlite3; print(sqlite3.connect("/var/lib/syslog-relay/events.sqlite3").execute("select count(*) from pending_events").fetchone()[0])'
 }
 
 queue_ids() {
-  docker exec hf-agent-low python -c \
-    'import sqlite3; print("\n".join(row[0] for row in sqlite3.connect("/var/lib/honeyforge/events.sqlite3").execute("select event_id from pending_events order by event_id")))'
+  docker exec syslog-relay-a python -c \
+    'import sqlite3; print("\n".join(row[0] for row in sqlite3.connect("/var/lib/syslog-relay/events.sqlite3").execute("select event_id from pending_events order by event_id")))'
 }
 
 before_ids="$(mktemp)"

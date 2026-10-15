@@ -140,7 +140,8 @@ def test_install_script_declines_marked_service_name(tmp_path: Path) -> None:
     assert not (tmp_path / "unit").exists()
 
 
-def test_install_script_installs_neutral_low_service(tmp_path: Path) -> None:
+@pytest.mark.parametrize("level", ["low", "medium"])
+def test_install_script_installs_neutral_service(tmp_path: Path, level: str) -> None:
     install_dir = tmp_path / "lib"
     state_dir = tmp_path / "state"
     config_dir = tmp_path / "etc"
@@ -150,7 +151,7 @@ def test_install_script_installs_neutral_low_service(tmp_path: Path) -> None:
         ["bash", str(ROOT / "agent/install.sh")],
         env=os.environ
         | {
-            "LEVEL": "low",
+            "LEVEL": level,
             "SKIP_USER": "1",
             "SKIP_SYSTEMD": "1",
             "INSTALL_DIR": str(install_dir),
@@ -163,14 +164,78 @@ def test_install_script_installs_neutral_low_service(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
 
-    assert (install_dir / "relay.py").is_file()
+    assert (install_dir / "relay.pyz").is_file()
     assert not (install_dir / "main.py").exists()
     assert (config_dir / "relay.env").is_file()
     assert state_dir.is_dir()
+    import zipfile
+    with zipfile.ZipFile(install_dir / "relay.pyz") as bundle:
+        assert "__main__.py" in bundle.namelist()
+        assert "listeners.py" in bundle.namelist()
+        assert not any(marker in name.lower() for name in bundle.namelist() for marker in MARKERS)
+    # Import every bundled module and the entry point with the actual interpreter.
+    # This checks rewritten imports without contacting a Control Center.
+    probe = """
+import sys, types, zipimport, zipfile
+sys.path.insert(0, sys.argv[1])
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    for path in archive.namelist():
+        if path.endswith('.py') and path != '__main__.py':
+            __import__(path[:-3].replace('/', '.').removesuffix('.__init__'))
+module = types.ModuleType('entry_probe')
+sys.modules[module.__name__] = module
+exec(zipimport.zipimporter(sys.argv[1]).get_code('__main__'), module.__dict__)
+"""
+    subprocess.run([sys.executable, '-c', probe, str(install_dir / 'relay.pyz')], check=True, capture_output=True, text=True)
 
     unit = (unit_dir / "syslog-relay.service").read_text()
     assert "ExecStart=" in unit
-    assert "relay.py" in unit
+    assert "relay.pyz" in unit
     assert "@@" not in unit
     for marker in MARKERS:
         assert marker not in unit.lower()
+
+
+def test_install_upgrade_preserves_state_and_removes_old_package_paths(tmp_path: Path) -> None:
+    install_dir, config_dir, state_dir = (tmp_path / name for name in ('lib', 'etc', 'state'))
+    for directory in (install_dir / 'agent', install_dir / 'honeyforge_common', config_dir, state_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+    (install_dir / 'honeyforge_common' / 'telemetry.py').write_text('old module')
+    (install_dir / 'relay.py').write_text('old entry point')
+    original = b'queue including pending events'
+    (state_dir / 'events.sqlite3').write_bytes(original)
+    (config_dir / 'relay.env').write_text('CENTER_URL=https://existing.example\nTRAP_SECRET_FILE=/etc/syslog-relay/existing.key\nAGENT_VERSION=2.0\n')
+    result = subprocess.run(['bash', str(ROOT / 'agent/install.sh')], env=os.environ | {
+        'SKIP_USER': '1', 'SKIP_SYSTEMD': '1', 'INSTALL_DIR': str(install_dir),
+        'CONFIG_DIR': str(config_dir), 'STATE_DIR': str(state_dir), 'UNIT_DIR': str(tmp_path / 'units'),
+    }, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert sorted(path.name for path in install_dir.iterdir()) == ['relay.pyz']
+    assert (state_dir / 'events.sqlite3').read_bytes() == original
+    assert (config_dir / 'relay.env').read_text() == 'CENTER_URL=https://existing.example\nSERVICE_KEY_FILE=/etc/syslog-relay/existing.key\nSERVICE_VERSION=2.0\n'
+
+
+@pytest.mark.parametrize('variable', ['AGENT_USER', 'AGENT_GROUP'])
+def test_install_rejects_marked_account_override(tmp_path: Path, variable: str) -> None:
+    result = subprocess.run(['bash', str(ROOT / 'agent/install.sh')], env=os.environ | {
+        variable: 'honeyforge-agent', 'SKIP_USER': '1', 'SKIP_SYSTEMD': '1',
+        'INSTALL_DIR': str(tmp_path / 'lib'), 'CONFIG_DIR': str(tmp_path / 'etc'),
+        'STATE_DIR': str(tmp_path / 'state'), 'UNIT_DIR': str(tmp_path / 'units'),
+    }, capture_output=True, text=True)
+    assert result.returncode != 0 and 'refusing' in result.stderr
+    assert not (tmp_path / 'lib').exists()
+
+
+def test_install_upgrade_renames_default_key_without_changing_secret(tmp_path: Path) -> None:
+    config_dir = tmp_path / 'etc'
+    config_dir.mkdir()
+    secret = b'existing-credential-do-not-regenerate\n'
+    (config_dir / 'trap_secret').write_bytes(secret)
+    (config_dir / 'relay.env').write_text(f'TRAP_SECRET_FILE={config_dir}/trap_secret\n')
+    subprocess.run(['bash', str(ROOT / 'agent/install.sh')], env=os.environ | {
+        'SKIP_USER': '1', 'SKIP_SYSTEMD': '1', 'INSTALL_DIR': str(tmp_path / 'lib'),
+        'CONFIG_DIR': str(config_dir), 'STATE_DIR': str(tmp_path / 'state'), 'UNIT_DIR': str(tmp_path / 'units'),
+    }, check=True, capture_output=True, text=True)
+    assert (config_dir / 'relay.key').read_bytes() == secret
+    assert not (config_dir / 'trap_secret').exists()
+    assert (config_dir / 'relay.env').read_text() == f'SERVICE_KEY_FILE={config_dir}/relay.key\n'

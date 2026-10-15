@@ -53,11 +53,11 @@ Uvicorn с `TRUSTED_PROXY_IPS=172.30.0.10`. Nginx перезаписывает �
 одновременно измените его static address и `TRUSTED_PROXY_IPS`; не указывайте
 широкую публичную подсеть.
 
-Agent подключён к двум сетям: `agent_egress_net` для исходящего management TLS
-и `honeypot_exposed` для эмулируемых портов. Он работает как
-`honeyforge-agent`, с read-only root filesystem, dropped capabilities и
-единственным persistent writable volume `/var/lib/honeyforge`. В базовой
-distributed-схеме `honeypot_exposed` — internal network без внешнего маршрута;
+Agent подключён к двум сетям: `relay_egress_net` для исходящего management TLS
+и `service_net` для эмулируемых портов. Он работает как
+`syslog-relay`, с read-only root filesystem, dropped capabilities и
+единственным persistent writable volume `/var/lib/syslog-relay`. В базовой
+distributed-схеме `service_net` — internal network без внешнего маршрута;
 каждый Agent слушает только свой статический адрес этой сети (`172.31.0.11` или
 `172.31.0.12`), поэтому management-интерфейс не публикует trap-порты.
 
@@ -85,14 +85,55 @@ sudo systemctl start syslog-relay
 `/etc/syslog-relay/relay.env`, буфер в `/var/lib/syslog-relay`, создаёт
 одноимённую системную учётную запись и юнит `syslog-relay.service` с
 hardened-настройками (`ProtectSystem=strict`, `NoNewPrivileges`,
-`ReadWritePaths` только на state-dir). Файл точек входа копируется под
-нейтральным именем `relay.py`. `SERVICE_NAME`, `LEVEL`, `PYTHON` и пути
+`ReadWritePaths` только на state-dir). Устанавливается единый пакет `relay.pyz` с нейтральными
+именами модулей (`listeners`, `relay_common`, `http_service` и т. д.). `SERVICE_NAME`, `LEVEL`, `PYTHON` и пути
 переопределяются переменными окружения; `SERVICE_NAME` с маркером скрипт
 отклоняет.
 
-Маскируется то, что видно в списке процессов: заголовок, поток, cmdline и имя
-сервиса. Имена кодовых пакетов (`honeyforge_common`, `agent`) — идентификаторы
-исходников, они не выводятся в `ps`.
+В Docker и systemd используется один и тот же `relay.pyz`. Финальные образы
+содержат пакет в `/usr/lib/syslog-relay/relay.pyz`, без деревьев `agent` и
+`honeyforge_common`. Исходники в репозитории сохраняют доменные названия.
+Сборка: `python3 agent/build_bundle.py --level low --output /tmp/relay.pyz`.
+Для Medium укажите `--level medium`; интерпретатору нужна зависимость `asyncssh`.
+
+Docker-сервисы называются `relay-a` и `relay-b`, контейнеры —
+`syslog-relay-a` и `syslog-relay-b`, образы — `local/syslog-relay-a:dev` и
+`local/syslog-relay-b:dev`. Используются volumes `relay_a_data`, `relay_b_data`
+и сети `relay_egress_net`, `relay_service_net`. Ключ внутри контейнера:
+`SERVICE_KEY_FILE=/run/secrets/relay.key`; CA — `/etc/syslog-relay/center-ca.crt`.
+`LOW_TRAP_SECRET_FILE` / `MEDIUM_TRAP_SECRET_FILE` остаются параметрами выбора
+исходного файла на машине оператора; исходный путь не устанавливается в контейнер.
+Нейтральные имена не скрывают назначение от администратора с доступом к коду
+или содержимому пакета.
+
+### Обновление ранее установленной поставки
+
+Повторный запуск `agent/install.sh` собирает новый пакет, убирает прежние
+управляемые деревья Python-модулей и перезапускает службу. Существующий
+`relay.env` и SQLite-буфер сохраняются; ключи `TRAP_SECRET_FILE` и
+`AGENT_VERSION` в env-файле переводятся в `SERVICE_KEY_FILE` и `SERVICE_VERSION`.
+Прежний стандартный файл `${CONFIG_DIR}/trap_secret` переименовывается в
+`relay.key`, если новое имя свободно; конфигурация обновляется вместе с ним.
+Пути к нестандартным ключам сохраняются.
+
+В Docker сменились проект, имена контейнеров, сетей и volumes. Перед обновлением
+остановите старую поставку её прежним Compose-файлом (`down` **без** `-v`),
+чтобы освободить порты и подсеть `172.31.0.0/24`. Не удаляйте старые volumes:
+они содержат очередь неподтверждённых событий. Скопируйте их в новые имена,
+пока оба Agent остановлены:
+
+```bash
+docker volume create relay_a_data
+docker volume create relay_b_data
+# В типовой старой установке исходные имена приведены ниже; проверьте docker volume ls.
+docker run --rm --user 0 -v honeyforge-honeypots_agent_low_data:/from:ro -v relay_a_data:/to python:3.12-slim python -c 'import shutil, os; shutil.copytree("/from", "/to", dirs_exist_ok=True); [os.chown(os.path.join(root, name), 10010, 10010) for root, dirs, files in os.walk("/to") for name in dirs + files]; os.chown("/to", 10010, 10010)'
+docker run --rm --user 0 -v honeyforge-honeypots_medium_agent_data:/from:ro -v relay_b_data:/to python:3.12-slim python -c 'import shutil, os; shutil.copytree("/from", "/to", dirs_exist_ok=True); [os.chown(os.path.join(root, name), 10011, 10011) for root, dirs, files in os.walk("/to") for name in dirs + files]; os.chown("/to", 10011, 10011)'
+```
+
+После копирования запустите новую поставку с пересборкой образов. Для временного
+использования прежних volumes доступны `RELAY_A_DATA_VOLUME` и
+`RELAY_B_DATA_VOLUME`; они сохранят старые имена до отдельного переноса.
+Не запускайте старый и новый контейнер одновременно на одной SQLite-очереди.
 
 ## Запуск
 

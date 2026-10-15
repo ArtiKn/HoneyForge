@@ -39,7 +39,8 @@ demo: demo-env certs ## Start the complete idempotent local MVP demo
 	@echo "[demo] Control Center: https://localhost:$${CENTER_HTTPS_PORT:-8443}"
 
 demo-reset: ## Remove the demo stack, volumes, certificates-free state for a clean run
-	-$(COMPOSE) $(CENTER_FILE) $(HONEY_FILE) $(DEMO_FILE) down -v --remove-orphans
+	-$(HONEY) down -v --remove-orphans
+	-$(CENTER) down -v --remove-orphans
 	-rm -f secrets/low_trap_secret secrets/medium_trap_secret
 	@echo "[demo-reset] removed demo volumes and Trap credentials; run 'make demo' for a clean stand"
 

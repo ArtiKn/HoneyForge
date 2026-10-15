@@ -1,6 +1,6 @@
-# Honeypot fleet: agent-low and agent-medium on a separated DMZ host.
+# Honeypot fleet: relay-a and relay-b on a separated DMZ host.
 # The local demo adds docker-compose.demo.yml for host-gateway resolution.
-name: honeyforge-honeypots
+name: relay-services
 
 x-agent-common: &agent-common
   restart: unless-stopped
@@ -14,50 +14,50 @@ x-agent-common: &agent-common
     - /tmp
   cap_drop:
     - ALL
-  user: honeyforge-agent
+  user: syslog-relay
   group_add:
     - ${HOST_SECRET_GID:-1000}
   networks:
-    - agent_egress_net
-    - honeypot_exposed
+    - relay_egress_net
+    - service_net
 
 services:
-  agent-low:
+  relay-a:
     <<: *agent-common
     build:
       context: ..
       dockerfile: agent/low/Dockerfile
-    image: honeyforge/agent-low:dev
-    container_name: hf-agent-low
+    image: local/syslog-relay-a:dev
+    container_name: syslog-relay-a
     networks:
-      agent_egress_net:
+      relay_egress_net:
         priority: 100
-      honeypot_exposed:
+      service_net:
         ipv4_address: 172.31.0.11
         priority: 1000
     environment:
       CENTER_URL: ${AGENT_CENTER_URL:-https://assets.cdn-static.example}
-      TRAP_SECRET_FILE: /run/secrets/trap_secret
-      CENTER_CA_FILE: /etc/honeyforge/center-ca.crt
-      EVENT_QUEUE_PATH: /var/lib/honeyforge/events.sqlite3
+      SERVICE_KEY_FILE: /run/secrets/relay.key
+      CENTER_CA_FILE: /etc/syslog-relay/center-ca.crt
+      EVENT_QUEUE_PATH: /var/lib/syslog-relay/events.sqlite3
       EVENT_QUEUE_MAX_EVENTS: ${EVENT_QUEUE_MAX_EVENTS:-100000}
       EVENT_QUEUE_MAX_BYTES: ${EVENT_QUEUE_MAX_BYTES:-268435456}
       HEALTH_INTERVAL_SECONDS: ${HEALTH_INTERVAL_SECONDS:-30}
       PROFILE_CHECK_INTERVAL_SECONDS: ${PROFILE_CHECK_INTERVAL_SECONDS:-30}
       DELIVERY_INTERVAL_SECONDS: ${DELIVERY_INTERVAL_SECONDS:-1}
-      AGENT_VERSION: ${AGENT_VERSION:-0.1.0}
+      SERVICE_VERSION: ${AGENT_VERSION:-0.1.0}
       LISTEN_HOST: 172.31.0.11
       TELEMETRY_PATH: ${TELEMETRY_PATH:-/assets/v2/init}
       PROCESS_MASK_NAME: ${PROCESS_MASK_NAME:-syslog-relay}
       BEACON_INTERVAL_SECONDS: ${BEACON_INTERVAL_SECONDS:-60}
       BEACON_JITTER_SECONDS: ${BEACON_JITTER_SECONDS:-30}
     secrets:
-      - source: low_trap_secret
-        target: trap_secret
+      - source: relay_a_key
+        target: relay.key
         mode: 0444
     volumes:
-      - ${CENTER_CA_CERT_FILE:-./nginx/certs/ca.crt}:/etc/honeyforge/center-ca.crt:ro
-      - agent_low_data:/var/lib/honeyforge
+      - ${CENTER_CA_CERT_FILE:-./nginx/certs/ca.crt}:/etc/syslog-relay/center-ca.crt:ro
+      - relay_a_data:/var/lib/syslog-relay
     ports:
       - "${LOW_SSH_PORT:-2222}:${LOW_SSH_INTERNAL_PORT:-22}"
       - "${LOW_HTTP_PORT:-8080}:${LOW_HTTP_INTERNAL_PORT:-80}"
@@ -69,24 +69,24 @@ services:
           cpus: "0.5"
           memory: 128M
 
-  agent-medium:
+  relay-b:
     <<: *agent-common
     build:
       context: ..
       dockerfile: agent/medium/Dockerfile
-    image: honeyforge/agent-medium:dev
-    container_name: hf-agent-medium
+    image: local/syslog-relay-b:dev
+    container_name: syslog-relay-b
     networks:
-      agent_egress_net:
+      relay_egress_net:
         priority: 100
-      honeypot_exposed:
+      service_net:
         ipv4_address: 172.31.0.12
         priority: 1000
     environment:
       CENTER_URL: ${AGENT_CENTER_URL:-https://assets.cdn-static.example}
-      TRAP_SECRET_FILE: /run/secrets/medium_trap_secret
-      CENTER_CA_FILE: /etc/honeyforge/center-ca.crt
-      EVENT_QUEUE_PATH: /var/lib/honeyforge/events.sqlite3
+      SERVICE_KEY_FILE: /run/secrets/relay.key
+      CENTER_CA_FILE: /etc/syslog-relay/center-ca.crt
+      EVENT_QUEUE_PATH: /var/lib/syslog-relay/events.sqlite3
       EVENT_QUEUE_MAX_EVENTS: ${EVENT_QUEUE_MAX_EVENTS:-100000}
       EVENT_QUEUE_MAX_BYTES: ${EVENT_QUEUE_MAX_BYTES:-268435456}
       HEALTH_INTERVAL_SECONDS: ${HEALTH_INTERVAL_SECONDS:-30}
@@ -95,12 +95,12 @@ services:
       LISTEN_HOST: 172.31.0.12
       PROCESS_MASK_NAME: ${PROCESS_MASK_NAME:-syslog-relay}
     secrets:
-      - source: medium_trap_secret
-        target: medium_trap_secret
+      - source: relay_b_key
+        target: relay.key
         mode: 0444
     volumes:
-      - ${CENTER_CA_CERT_FILE:-./nginx/certs/ca.crt}:/etc/honeyforge/center-ca.crt:ro
-      - medium_agent_data:/var/lib/honeyforge
+      - ${CENTER_CA_CERT_FILE:-./nginx/certs/ca.crt}:/etc/syslog-relay/center-ca.crt:ro
+      - relay_b_data:/var/lib/syslog-relay
     ports:
       - "${MEDIUM_SSH_PORT:-2223}:${MEDIUM_SSH_INTERNAL_PORT:-22}"
       - "${MEDIUM_HTTP_PORT:-8081}:${MEDIUM_HTTP_INTERNAL_PORT:-80}"
@@ -112,11 +112,11 @@ services:
           memory: 192M
 
 networks:
-  agent_egress_net:
-    name: honeyforge_agent_egress_net
+  relay_egress_net:
+    name: relay_egress_net
     driver: bridge
-  honeypot_exposed:
-    name: honeyforge_honeypot_exposed
+  service_net:
+    name: relay_service_net
     driver: bridge
     internal: true
     ipam:
@@ -124,11 +124,13 @@ networks:
         - subnet: 172.31.0.0/24
 
 volumes:
-  agent_low_data:
-  medium_agent_data:
+  relay_a_data:
+    name: ${RELAY_A_DATA_VOLUME:-relay_a_data}
+  relay_b_data:
+    name: ${RELAY_B_DATA_VOLUME:-relay_b_data}
 
 secrets:
-  low_trap_secret:
+  relay_a_key:
     file: ${LOW_TRAP_SECRET_FILE:-./secrets/low_trap_secret}
-  medium_trap_secret:
+  relay_b_key:
     file: ${MEDIUM_TRAP_SECRET_FILE:-./secrets/medium_trap_secret}

@@ -27,6 +27,18 @@ case "${SERVICE_NAME,,}" in
     ;;
 esac
 
+for identity in "${SERVICE_NAME}" "${AGENT_USER}" "${AGENT_GROUP}"; do
+  if [[ ! "${identity}" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]]; then
+    echo "invalid service identity: ${identity}" >&2
+    exit 1
+  fi
+  case "${identity,,}" in
+    *honey* | *agent* | *trap* | *decoy* | *c2*)
+      echo "refusing non-neutral service identity: ${identity}" >&2
+      exit 1 ;;
+  esac
+done
+
 case "${LEVEL}" in
   low | medium) ;;
   *)
@@ -35,47 +47,43 @@ case "${LEVEL}" in
     ;;
 esac
 
-common_source="${AGENT_DIR}/../honeyforge_common"
-if [ ! -d "${common_source}" ]; then
-  echo "honeyforge_common not found at ${common_source}" >&2
-  exit 1
-fi
-
-echo "Installing ${LEVEL} Trap Agent as ${SERVICE_NAME} in ${INSTALL_DIR}"
-
+# Use the selected interpreter for both packaging and runtime compatibility.
+# The bundle has neutral module paths and does not install the source tree.
+"${PYTHON}" -c 'import zipapp'
+echo "Installing ${SERVICE_NAME} in ${INSTALL_DIR}"
 install -d -m 0755 "${INSTALL_DIR}" "${CONFIG_DIR}"
 install -d -m 0700 "${STATE_DIR}"
+"${PYTHON}" "${AGENT_DIR}/build_bundle.py" --level "${LEVEL}" --output "${INSTALL_DIR}/relay.pyz"
+exec_start="${PYTHON} ${INSTALL_DIR}/relay.pyz"
+# Remove only the source layout owned by previous versions of this installer.
+# State and configuration live outside these directories and are preserved.
+rm -rf "${INSTALL_DIR}/agent" "${INSTALL_DIR}/honeyforge_common" "${INSTALL_DIR}/__pycache__"
+rm -f "${INSTALL_DIR}/honeyforge_low.py" "${INSTALL_DIR}/profile_runtime.py" \
+  "${INSTALL_DIR}/process_masking.py" "${INSTALL_DIR}/relay.py"
 
-rm -rf "${INSTALL_DIR}/honeyforge_common"
-cp -R "${common_source}" "${INSTALL_DIR}/honeyforge_common"
-find "${INSTALL_DIR}/honeyforge_common" -name '__pycache__' -type d -prune -exec rm -rf {} +
+# Preserve existing configuration and queue paths during an in-place upgrade.
+if [ -f "${CONFIG_DIR}/relay.env" ]; then
+  "${PYTHON}" - "${CONFIG_DIR}" <<'PYCONFIG'
+import pathlib
+import sys
 
-if [ "${LEVEL}" = "low" ]; then
-  install -m 0644 "${AGENT_DIR}/low/honeyforge_low.py" "${INSTALL_DIR}/honeyforge_low.py"
-  install -m 0644 "${AGENT_DIR}/low/profile_runtime.py" "${INSTALL_DIR}/profile_runtime.py"
-  install -m 0644 "${AGENT_DIR}/low/process_masking.py" "${INSTALL_DIR}/process_masking.py"
-  # Neutral entry point: the file on disk is not called main.py.
-  install -m 0644 "${AGENT_DIR}/low/main.py" "${INSTALL_DIR}/relay.py"
-  exec_start="${PYTHON} ${INSTALL_DIR}/relay.py"
-else
-  install -d -m 0755 "${INSTALL_DIR}/agent/low" "${INSTALL_DIR}/agent/medium"
-  install -m 0644 "${AGENT_DIR}/__init__.py" "${INSTALL_DIR}/agent/__init__.py"
-  for module in honeyforge_low profile_runtime process_masking __init__; do
-    install -m 0644 "${AGENT_DIR}/low/${module}.py" "${INSTALL_DIR}/agent/low/${module}.py"
-  done
-  install -m 0644 "${AGENT_DIR}/medium/main.py" "${INSTALL_DIR}/agent/medium/main.py"
-  for module in http_service fake_fs mysql_service; do
-    install -m 0644 "${AGENT_DIR}/medium/${module}.py" "${INSTALL_DIR}/agent/medium/${module}.py"
-  done
-  exec_start="${PYTHON} -m agent.medium.main"
+config_dir = pathlib.Path(sys.argv[1])
+env_file = config_dir / "relay.env"
+content = env_file.read_text().replace("TRAP_SECRET_FILE=", "SERVICE_KEY_FILE=").replace("AGENT_VERSION=", "SERVICE_VERSION=")
+old_key, new_key = config_dir / "trap_secret", config_dir / "relay.key"
+old_setting = "SERVICE_KEY_FILE=" + str(old_key)
+if old_setting in content.splitlines() and old_key.is_file() and not new_key.exists():
+    old_key.rename(new_key)
+    content = content.replace(old_setting, "SERVICE_KEY_FILE=" + str(new_key))
+env_file.write_text(content)
+PYCONFIG
 fi
-
 if [ ! -f "${CONFIG_DIR}/relay.env" ]; then
   cat > "${CONFIG_DIR}/relay.env" <<EOF
 # Runtime configuration for the ${SERVICE_NAME} service.
 # Replace with the real Control Center endpoint, Trap Secret and CA bundle.
 CENTER_URL=https://assets.cdn-static.example
-TRAP_SECRET_FILE=${CONFIG_DIR}/trap_secret
+SERVICE_KEY_FILE=${CONFIG_DIR}/relay.key
 CENTER_CA_FILE=${CONFIG_DIR}/center-ca.crt
 EVENT_QUEUE_PATH=${STATE_DIR}/events.sqlite3
 PROCESS_MASK_NAME=${SERVICE_NAME}
@@ -106,7 +114,8 @@ chmod 0644 "${unit_target}"
 
 if [ "${SKIP_SYSTEMD}" != "1" ]; then
   systemctl daemon-reload
-  systemctl enable --now "${SERVICE_NAME}.service"
+  systemctl enable "${SERVICE_NAME}.service"
+  systemctl restart "${SERVICE_NAME}.service"
 fi
 
 echo "Installed ${SERVICE_NAME}.service (${exec_start})"

@@ -65,7 +65,7 @@ The UI remains vanilla HTML, CSS, and JavaScript with four views: login, dashboa
 
 The demo uses a generated local CA trusted by Agents. Distributed installations use operator-provided certificates or a public CA. Nginx trusts forwarded client addresses only from configured internal proxies and enforces request-size and connection-rate limits. Emulators also limit concurrent clients, input sizes, and idle time.
 
-The Agent runs unprivileged as `honeyforge-agent` and masks its process title, thread name and command line behind a neutral daemon name (MASK-4) so it is not recognizable on its host. Containers use read-only filesystems where feasible, dropped capabilities, resource limits, dedicated writable volumes, and separated management networks. Services emit structured JSON logs without credentials, Trap Secrets, enrollment tokens, or JWTs. `/health` reports process liveness and `/ready` verifies mandatory dependencies; metrics are Bonus.
+The Agent runs unprivileged as `syslog-relay` and masks its process title, thread name and command line behind a neutral daemon name (MASK-4) so it is not recognizable on its host. Containers use read-only filesystems where feasible, dropped capabilities, resource limits, dedicated writable volumes, and separated management networks. Services emit structured JSON logs without credentials, Trap Secrets, enrollment tokens, or JWTs. `/health` reports process liveness and `/ready` verifies mandatory dependencies; metrics are Bonus.
 
 ## Deployment and demo
 

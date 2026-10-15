@@ -99,11 +99,14 @@ async function request(url, options = {}) {
     window.location.replace('/login.html');
     throw new Error('Необходимо войти в систему');
   }
-  if (response.status === 409) {
+  if (response.status === 409 && options.method !== 'DELETE') {
     throw new Error('Профиль ловушки изменён в другом окне. Загружена последняя версия.');
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
+    if (body.detail === 'Trap Profile changed; reload it before editing') {
+      throw new Error('Профиль ловушки изменён в другом окне. Загружена последняя версия.');
+    }
     throw new Error(body.detail || 'Не удалось выполнить действие в центре управления.');
   }
   return response;
@@ -153,7 +156,7 @@ function selectProfile(profile) {
   document.querySelector('#version-label').textContent = `Версия ${profile.version}`;
   const locked = profile.is_archived || !canWrite;
   removeButton.hidden = !canWrite;
-  removeButton.disabled = profile.is_archived;
+  removeButton.disabled = !canWrite;
   form.querySelector('[type="submit"]').disabled = locked;
   document.querySelector('#add-service').disabled = locked;
   document.querySelector('#add-credential').disabled = locked;
@@ -229,7 +232,7 @@ form.addEventListener('submit', async event => {
 
 removeButton.addEventListener('click', async () => {
   if (!canWrite) return;
-  if (!selected || !window.confirm(`Удалить профиль ловушки «${selected.name}»? Если он уже использовался, он будет перемещён в архив.`)) return;
+  if (!selected || !window.confirm(`Удалить профиль ловушки «${selected.name}»? Удаление необратимо. Назначенный ловушкам профиль сначала нужно заменить.`)) return;
   try {
     await request(`${api}/${selected.id}`, {
       method: 'DELETE',
@@ -238,9 +241,8 @@ removeButton.addEventListener('click', async () => {
     const oldId = selected.id;
     selected = null;
     await loadProfiles(oldId);
-    const retained = profiles.find(profile => profile.id === oldId);
-    if (retained) selectProfile(retained); else newProfile();
-    notice.textContent = retained ? 'Профиль ловушки перемещён в архив.' : 'Неиспользуемый профиль ловушки удалён.';
+    newProfile();
+    notice.textContent = 'Профиль ловушки удалён.';
   } catch (error) {
     const message = error.message;
     if (message.includes('изменён в другом окне')) await loadProfiles();

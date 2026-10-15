@@ -41,27 +41,30 @@
           <option value="connection_closed">Соединение закрыто</option>
         </select>
       </label>
-      <label>IP источника <input name="source_ip" type="text" autocomplete="off" /></label>
-      <fieldset class="datetime-filter">
-        <legend>Получено с</legend>
+      <label>IP источника <input name="source_ip" type="text" autocomplete="off" placeholder="192.0.2.44 или 2001:db8::1" /></label>
+      <fieldset class="datetime-filter" aria-label="Начало периода">
         <div class="datetime-inputs">
           <label>Дата<input name="received_from_date" type="date" /></label>
           <label>Время<input name="received_from_time" type="time" step="1" /></label>
         </div>
       </fieldset>
-      <fieldset class="datetime-filter">
-        <legend>Получено по</legend>
+      <fieldset class="datetime-filter" aria-label="Конец периода">
         <div class="datetime-inputs">
           <label>Дата<input name="received_to_date" type="date" /></label>
           <label>Время<input name="received_to_time" type="time" step="1" /></label>
         </div>
       </fieldset>
-      <p class="hint filter-timezone">Дата и время указаны в часовом поясе вашего устройства.</p>
       <div class="filter-actions">
         <button class="button" type="submit">Применить фильтры</button>
         <a class="button quiet" href="/events.html">Сбросить</a>
       </div>
     </form>
+    <div class="event-columns" aria-hidden="true">
+      <span>Время</span>
+      <span>Событие / ловушка</span>
+      <span>Источник → сервис / сессия атаки</span>
+      <span>Данные (JSON)</span>
+    </div>
     <ol class="event-stream" id="event-stream" aria-live="polite"></ol>
     <p class="empty-events" id="empty-events">События безопасности отсутствуют.</p>
   </main>
@@ -72,17 +75,6 @@
       window.location.replace('/login.html');
     });
   </script>
-  <script>
-    fetch('/api/v1/auth/me', { credentials: 'same-origin' })
-      .then(r => {
-        if (r.status === 401) window.location.replace('/login.html');
-        if (!r.ok) throw new Error('identity unavailable');
-        return r.json();
-      })
-      .then(d => {
-        document.getElementById('operator').textContent = `${d.username} (${d.role === 'admin' ? 'Администратор' : 'Наблюдатель'})`;
-      })
-      .catch(() => { document.getElementById('operator').textContent = 'Не удалось загрузить оператора'; });
-  </script>
+  <script type="module" src="/header.js"></script>
 </body>
 </html>

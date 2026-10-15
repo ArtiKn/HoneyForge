@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import IPvAnyAddress
+from ipaddress import ip_address
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from center.api.database import get_db
@@ -35,12 +35,20 @@ async def list_security_events(
         "connection_closed",
     ]
     | None = None,
-    source_ip: IPvAnyAddress | None = None,
+    source_ip: str | None = None,
     received_from: datetime | None = None,
     received_to: datetime | None = None,
     cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> SecurityEventPage:
+    if source_ip is not None:
+        try:
+            source_ip = str(ip_address(source_ip.strip()))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Укажите IP источника без порта и маски сети, например 192.0.2.44 или 2001:db8::1.",
+            ) from exc
     for value in (received_from, received_to):
         if value is not None and (value.tzinfo is None or value.utcoffset() is None):
             raise HTTPException(

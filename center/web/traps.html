@@ -89,17 +89,6 @@
     </section>
   </main>
   <script type="module" src="/traps.js"></script>
-  <script>
-    fetch('/api/v1/auth/me', { credentials: 'same-origin' })
-      .then(r => {
-        if (r.status === 401) window.location.replace('/login.html');
-        if (!r.ok) throw new Error('identity unavailable');
-        return r.json();
-      })
-      .then(d => {
-        document.getElementById('operator').textContent = `${d.username} (${d.role === 'admin' ? 'Администратор' : 'Наблюдатель'})`;
-      })
-      .catch(() => { document.getElementById('operator').textContent = 'Не удалось загрузить оператора'; });
-  </script>
+  <script type="module" src="/header.js"></script>
 </body>
 </html>

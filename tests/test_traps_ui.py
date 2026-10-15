@@ -24,7 +24,7 @@ def test_traps_ui_exposes_the_management_workflow() -> None:
     assert "trap-start" in behavior
     assert "trap-stop" in behavior
     assert "trap-revoke" in behavior
-    assert "trap-archive" in behavior
+    assert "trap-archive" not in behavior
     assert "/start" in behavior
     assert "/stop" in behavior
 

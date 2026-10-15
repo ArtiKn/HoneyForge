@@ -23,7 +23,7 @@
     </nav>
   </header>
   <main class="dashboard">
-    <h1 class="reveal">Настройте ловушку до подключения к сети.</h1>
+    <h1 class="reveal">Управляйте всеми ловушками из одной точки</h1>
     <p class="lead reveal">Опишите поведение сервисов один раз, версионируйте изменения и храните историю, чтобы понимать, что представляла каждая ловушка.</p>
     <a class="button primary-link reveal" href="/profiles.html">Управлять профилями ловушек</a>
     <section class="status-board reveal" aria-labelledby="fleet-status-heading">
@@ -42,16 +42,6 @@
     </section>
   </main>
   <script>
-    fetch('/api/v1/auth/me', { credentials: 'same-origin' })
-      .then(r => {
-        if (r.status === 401) window.location.replace('/login.html');
-        if (!r.ok) throw new Error('identity unavailable');
-        return r.json();
-      })
-      .then(d => {
-        document.getElementById('operator').textContent = `${d.username} (${d.role === 'admin' ? 'Администратор' : 'Наблюдатель'})`;
-      })
-      .catch(() => { document.getElementById('operator').textContent = 'Не удалось загрузить оператора'; });
 
     fetch('/api/v1/traps', { credentials: 'same-origin' })
       .then(r => {
@@ -76,5 +66,6 @@
         .then(() => window.location.replace('/login.html'));
     });
   </script>
+  <script type="module" src="/header.js"></script>
 </body>
 </html>

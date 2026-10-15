@@ -1,3 +1,12 @@
+function normalizeIp(value) {
+  value = value.trim();
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(value) && value.split('.').every(part => Number(part) <= 255 && String(Number(part)) === part)) return value;
+  if (value.includes(':') && /^[0-9a-f:.]+$/i.test(value)) {
+    try { return new URL(`http://[${value}]/`).hostname.slice(1, -1); } catch { /* Invalid IPv6. */ }
+  }
+  return null;
+}
+
 const labels = {
   connection_opened: 'Соединение открыто',
   connection_closed: 'Соединение закрыто',
@@ -31,12 +40,28 @@ function renderEvent(event) {
   title.textContent = labels[event.event_type] || event.event_type;
 
   const route = document.createElement('span');
-  route.textContent = `${event.source_ip}:${event.source_port ?? '—'} → ${event.target_service}:${event.target_port}`;
+  route.textContent = `${event.source_ip.includes(':') ? `[${event.source_ip}]` : event.source_ip}:${event.source_port ?? '—'} → ${event.target_service}:${event.target_port}`;
 
   const detail = document.createElement('code');
+  detail.tabIndex = 0;
+  detail.setAttribute('aria-label', 'Данные события');
   detail.textContent = event.payload.banner || JSON.stringify(event.payload);
 
-  item.append(times, title, route, detail);
+  const identifiers = document.createElement('div');
+  identifiers.className = 'event-identifiers';
+  for (const [label, name, value] of [
+    ['ID ловушки', 'trap_id', event.trap_id],
+    ['ID сессии атаки', 'attack_session_id', event.attack_session_id],
+  ]) {
+    const link = document.createElement('a');
+    const query = new URLSearchParams(location.search);
+    query.set(name, value);
+    link.className = name === 'trap_id' ? 'event-trap-id' : 'event-session-id';
+    link.href = `/events.html?${query}`;
+    link.textContent = `${label}: ${value}`;
+    identifiers.append(link);
+  }
+  item.append(times, title, route, detail, identifiers);
   return item;
 }
 
@@ -55,7 +80,8 @@ const filterNames = [
 const pageParams = new URLSearchParams(location.search);
 const filterParams = new URLSearchParams();
 for (const name of filterNames) {
-  const value = pageParams.get(name);
+  let value = pageParams.get(name)?.trim();
+  if (name === 'source_ip' && value) value = normalizeIp(value) || value;
   if (!value) continue;
   filterParams.set(name, value);
   if (name.startsWith('received_')) {
@@ -73,6 +99,8 @@ for (const name of filterNames) {
 
 let reconnectDelay = 250;
 let activeSocket = null;
+
+filtersForm.elements.namedItem('source_ip').addEventListener('input', event => event.target.setCustomValidity(''));
 
 for (const name of ['received_from', 'received_to']) {
   const date = filtersForm.elements.namedItem(`${name}_date`);
@@ -95,7 +123,17 @@ filtersForm.addEventListener('submit', event => {
       if (!date) continue;
       value = new Date(`${date}T${time || (name === 'received_to' ? '23:59:59' : '00:00:00')}`).toISOString();
     } else {
-      value = filtersForm.elements.namedItem(name).value;
+      value = filtersForm.elements.namedItem(name).value.trim();
+      if (name === 'source_ip' && value) {
+        const normalized = normalizeIp(value);
+        if (!normalized) {
+          const field = filtersForm.elements.namedItem(name);
+          field.setCustomValidity('Укажите IPv4 или IPv6 без порта и маски сети.');
+          field.reportValidity();
+          return;
+        }
+        value = normalized;
+      }
     }
     if (value) target.set(name, value);
   }
@@ -123,7 +161,7 @@ function matchesFilters(event) {
     trap_id: event.trap_id,
     attack_session_id: event.attack_session_id,
     event_type: event.event_type,
-    source_ip: event.source_ip,
+    source_ip: normalizeIp(event.source_ip),
   };
   for (const [name, actual] of Object.entries(comparisons)) {
     const expected = filterParams.get(name);
@@ -160,7 +198,10 @@ async function fetchPage(url) {
     window.location.replace('/login.html');
     throw new Error('Требуется вход оператора');
   }
-  if (!response.ok) throw new Error('Не удалось загрузить события безопасности');
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(typeof body.detail === 'string' ? body.detail : 'Проверьте фильтры: ID должны быть UUID, IP — адресом без порта.');
+  }
   return response.json();
 }
 
@@ -213,6 +254,6 @@ fetchPage(securityEventsUrl())
     emptyState.hidden = seenEventIds.size > 0;
     connectRealtime();
   })
-  .catch(() => {
-    emptyState.textContent = 'Не удалось загрузить события безопасности.';
+  .catch(error => {
+    emptyState.textContent = error.message;
   });

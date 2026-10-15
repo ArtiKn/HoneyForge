@@ -2,7 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from center.api.auth_dependencies import AdminOperator
@@ -181,32 +181,24 @@ async def archive_trap(
 
 
 @router.delete("/{trap_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_or_archive_trap(
+async def delete_trap(
     trap_id: UUID,
     operator: AdminOperator,
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
-    """Delete an unused Trap; keep history by archiving a referenced one."""
+    """Permanently remove a Trap and all of its owned history."""
 
     trap = await session.scalar(select(Trap).where(Trap.id == trap_id).with_for_update())
     if trap is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    source_ip = request.client.host if request.client else None
-    if await _has_history(session, trap_id):
-        TrapAccess(session).archive(trap, operator.id, source_ip)
-        return
-    await session.delete(trap)
-    session.add(
-        AuditEntry(
-            operator_id=operator.id,
-            action="trap.deleted",
-            entity="trap",
-            entity_id=trap_id,
-            details={},
-            source_ip=source_ip,
-        )
-    )
+    # Locking the parent prevents new FK references while its history is removed.
+    await session.execute(delete(SecurityEvent).where(SecurityEvent.trap_id == trap_id))
+    await session.execute(delete(AttackSession).where(AttackSession.trap_id == trap_id))
+    await session.execute(delete(AuditEntry).where(
+        AuditEntry.entity == "trap", AuditEntry.entity_id == trap_id
+    ))
+    await session.execute(delete(Trap).where(Trap.id == trap_id))
 
 
 async def _mutable_trap(session: AsyncSession, trap_id: UUID) -> Trap:
@@ -221,20 +213,6 @@ async def _mutable_trap(session: AsyncSession, trap_id: UUID) -> Trap:
             detail="Archived or revoked Traps cannot be started or stopped",
         )
     return trap
-
-
-async def _has_history(session: AsyncSession, trap_id: UUID) -> bool:
-    """Whether a Trap owns Security Events or Attack Sessions."""
-
-    event = await session.scalar(
-        select(SecurityEvent.id).where(SecurityEvent.trap_id == trap_id).limit(1)
-    )
-    if event is not None:
-        return True
-    session_record = await session.scalar(
-        select(AttackSession.id).where(AttackSession.trap_id == trap_id).limit(1)
-    )
-    return session_record is not None
 
 
 def _profile_change(trap: Trap, requested: UUID | None) -> UUID | None:

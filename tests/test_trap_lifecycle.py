@@ -546,7 +546,7 @@ async def test_security_event_query_combines_filters_and_ignores_agent_clock_ske
         attack_session_id=str(uuid4()),
         event_type="connection_opened",
         observed_at="2030-01-01T00:00:00Z",
-        source_ip="192.0.2.30",
+        source_ip="2001:db8::1",
     )
     other_trap = event(
         event_id="00000000-0000-0000-0000-000000000001",
@@ -595,6 +595,18 @@ async def test_security_event_query_combines_filters_and_ignores_agent_clock_ske
     ]
     assert [item["id"] for item in filtered.json()["items"]] == [matching["id"]]
     assert filtered.json()["items"][0]["observed_at"] == "2020-01-01T00:00:00Z"
+    for address, expected in [
+        (" 192.0.2.20 ", {matching["id"], other_trap["id"]}),
+        ("2001:0DB8:0:0:0:0:0:1", {same_received_later_uuid["id"]}),
+    ]:
+        result = await lifecycle_client.get("/api/v1/security-events", params={"source_ip": address})
+        assert result.status_code == 200
+        assert {item["id"] for item in result.json()["items"]} == expected
+    for invalid_ip in ["192.0.2.20:54321", "192.0.2.0/24", "unknown"]:
+        result = await lifecycle_client.get("/api/v1/security-events", params={"source_ip": invalid_ip})
+        assert result.status_code == 422
+        assert "без порта" in result.json()["detail"]
+
     assert (
         await lifecycle_client.get(
             "/api/v1/security-events",
@@ -1620,7 +1632,7 @@ async def test_archiving_a_trap_stops_it_and_blocks_further_commands(
     assert edit.status_code == 409
 
 
-async def test_delete_removes_an_unused_trap_and_archives_a_referenced_one(
+async def test_delete_removes_trap_history_and_invalidates_credentials(
     lifecycle_app, lifecycle_client
 ) -> None:
     unused = await precreate_trap(
@@ -1665,9 +1677,21 @@ async def test_delete_removes_an_unused_trap_and_archives_a_referenced_one(
     )
     assert retained.status_code == 204
     still_there = await lifecycle_client.get(f"/api/v1/traps/{referenced['id']}")
-    assert still_there.status_code == 200
-    assert still_there.json()["is_archived"] is True
-    assert still_there.json()["enabled"] is False
+    assert still_there.status_code == 404
+    async with lifecycle_app.state.database.session_factory() as session:
+        for model, column in [(SecurityEvent, SecurityEvent.trap_id), (AttackSession, AttackSession.trap_id), (AuditEntry, AuditEntry.entity_id)]:
+            assert not list(await session.scalars(select(model).where(column == referenced['id'])))
+    rejected = await lifecycle_client.post(
+        "/assets/v2/init", headers={**authorization(secret), "Content-Type": "application/javascript"},
+        json={"events": [{
+            "id": str(uuid4()), "schema_version": 1, "trap_id": referenced["id"],
+            "attack_session_id": str(uuid4()), "event_type": "connection_opened",
+            "observed_at": "2026-10-14T12:00:00Z", "source_ip": "192.0.2.10",
+            "source_port": 4444, "target_service": "ssh", "target_port": 22,
+            "payload": {"banner": "SSH-2.0-test"},
+        }]},
+    )
+    assert rejected.status_code == 401
 
 
 async def test_archived_trap_is_restored_and_reenrolled(

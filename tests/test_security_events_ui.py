@@ -87,6 +87,8 @@ def test_security_events_ui_renders_persisted_ssh_interaction() -> None:
 
     assert "Соединение открыто" in result.stdout
     assert "192.0.2.44:54321" in result.stdout
+    assert "ID ловушки: 22222222-2222-2222-2222-222222222222" in result.stdout
+    assert "ID сессии атаки: 33333333-3333-3333-3333-333333333333" in result.stdout
     assert "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.10" in result.stdout
 
 

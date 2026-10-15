@@ -123,18 +123,15 @@ function renderTable() {
         actionButton('Запустить', 'trap-start', trap, current => act(`${api}/${current.id}/start`)),
         actionButton('Остановить', 'secondary trap-stop', trap, current => act(`${api}/${current.id}/stop`)),
         actionButton('Отозвать доступ', 'danger trap-revoke', trap, current => revoke(current)),
-        actionButton('В архив', 'quiet trap-archive', trap, current => archive(current)),
       );
     } else {
       actions.append(
         actionButton('Восстановить', 'trap-restore', trap, restore),
       );
-      if (!trap.is_archived) {
-        actions.append(
-          actionButton('В архив', 'quiet trap-archive', trap, current => archive(current)),
-        );
-      }
+
     }
+
+    if (canWrite) actions.append(actionButton('Удалить', 'danger trap-delete', trap, deleteTrap));
 
     row.append(name, profile, status, lastSeen, ip, hostname, enabled, actions);
     return row;
@@ -187,14 +184,20 @@ async function act(url) {
   }
 }
 
+async function deleteTrap(trap) {
+  if (!window.confirm(`Удалить ловушку «${trap.name}» безвозвратно? Все её события безопасности, сессии атак, токены и записи аудита будут удалены.`)) return;
+  try {
+    await request(`${api}/${trap.id}`, { method: 'DELETE' });
+    showToken();
+    await loadTraps();
+    notice.textContent = 'Ловушка и все связанные данные удалены.';
+    notice.className = 'notice';
+  } catch (error) { reportError(error); }
+}
+
 async function revoke(trap) {
   if (!window.confirm(`Отозвать доступ для ловушки «${trap.name}»? Её учётные данные немедленно перестанут действовать.`)) return;
   await act(`${api}/${trap.id}/revoke`);
-}
-
-async function archive(trap) {
-  if (!window.confirm(`Переместить ловушку «${trap.name}» в архив? Её сервисы остановятся, история сохранится.`)) return;
-  await act(`${api}/${trap.id}/archive`);
 }
 
 async function restore(trap) {
@@ -250,10 +253,6 @@ document.querySelector('#logout').addEventListener('click', async () => {
 
 async function applyOperator(operator) {
   canWrite = canManage(operator);
-  const label = document.querySelector('#operator');
-  if (label && operator) {
-    label.textContent = `${operator.username} (${operator.role === 'admin' ? 'Администратор' : 'Наблюдатель'})`;
-  }
   if (!canWrite) {
     [...form.elements].forEach(control => {
       control.disabled = true;

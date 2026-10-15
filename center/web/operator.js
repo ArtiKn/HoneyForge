@@ -3,7 +3,14 @@
 // The API enforces the Operator role on every request; this helper only lets
 // the views hide controls a read-only Operator cannot use.
 
-export async function loadOperator() {
+let operatorPromise;
+
+export function loadOperator() {
+  // Share the request between the header and the page's permission controls.
+  return operatorPromise ??= fetchOperator();
+}
+
+async function fetchOperator() {
   try {
     const response = await fetch('/api/v1/auth/me', { credentials: 'same-origin' });
     if (response.status === 401) {

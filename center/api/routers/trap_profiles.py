@@ -2,7 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from center.api.auth_dependencies import AdminOperator
@@ -174,7 +174,7 @@ def _parse_etag(value: str | None) -> int:
 
 
 @router.delete("/{trap_profile_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_or_archive_trap_profile(
+async def delete_trap_profile(
     trap_profile_id: UUID,
     operator: AdminOperator,
     request: Request,
@@ -194,12 +194,6 @@ async def delete_or_archive_trap_profile(
             status_code=status.HTTP_409_CONFLICT,
             detail="Trap Profile changed; reload it before editing",
         )
-    if trap_profile.is_archived:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Archived Trap Profiles cannot be changed",
-        )
-
     has_assignment = (
         await session.scalar(
             select(Trap.id).where(Trap.trap_profile_id == trap_profile_id).limit(1)
@@ -207,23 +201,11 @@ async def delete_or_archive_trap_profile(
         is not None
     )
     if has_assignment:
-        trap_profile.is_archived = True
-        trap_profile.version += 1
-        action = "trap_profile.archived"
-        details = {"version": trap_profile.version}
-    else:
-        action = "trap_profile.deleted"
-        details = {"version": trap_profile.version}
-        await session.delete(trap_profile)
-
-    session.add(
-        AuditEntry(
-            operator_id=operator.id,
-            action=action,
-            entity="trap_profile",
-            entity_id=trap_profile_id,
-            details=details,
-            source_ip=request.client.host if request.client else None,
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Профиль назначен ловушкам. Сначала смените их профиль или удалите эти ловушки.",
         )
-    )
-
+    await session.execute(delete(AuditEntry).where(
+        AuditEntry.entity == "trap_profile", AuditEntry.entity_id == trap_profile_id
+    ))
+    await session.execute(delete(TrapProfile).where(TrapProfile.id == trap_profile_id))

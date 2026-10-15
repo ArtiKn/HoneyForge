@@ -375,60 +375,26 @@ async def test_unused_trap_profile_is_deleted(profile_client) -> None:
     assert (await profile_client.get(path)).status_code == 404
 
 
-async def test_assigned_trap_profile_is_archived_and_mutations_are_audited(
+async def test_assigned_profile_requires_reassignment_before_permanent_deletion(
     profile_app, profile_client
 ) -> None:
     created = await create_profile(profile_client, "Assigned SSH")
     profile_id = created["id"]
     async with profile_app.state.database.session_factory() as session:
-        session.add(
-            Trap(
-                name="edge-ssh",
-                trap_profile_id=profile_id,
-                status="provisioning",
-                is_archived=False,
-                agent_meta={},
-            )
-        )
+        trap = Trap(name="edge-ssh", trap_profile_id=profile_id,
+                    status="provisioning", is_archived=False, agent_meta={})
+        session.add(trap)
         await session.commit()
-
-    archived = await profile_client.delete(
-        f"/api/v1/trap-profiles/{profile_id}",
-        headers={"Origin": "https://test", "If-Match": '"1"'},
-    )
-    detail = await profile_client.get(f"/api/v1/trap-profiles/{profile_id}")
-
-    assert archived.status_code == 204
-    assert detail.status_code == 200
-    assert detail.json()["is_archived"] is True
-    assert detail.json()["version"] == 2
-    assert detail.headers["etag"] == '"2"'
-
+        trap_id = trap.id
+    headers = {"Origin": "https://test", "If-Match": '"1"'}
+    blocked = await profile_client.delete(f"/api/v1/trap-profiles/{profile_id}", headers=headers)
+    assert blocked.status_code == 409
+    assert (await profile_client.get(f"/api/v1/trap-profiles/{profile_id}")).json()["is_archived"] is False
+    assert (await profile_client.delete(f"/api/v1/traps/{trap_id}", headers=headers)).status_code == 204
+    assert (await profile_client.delete(f"/api/v1/trap-profiles/{profile_id}", headers=headers)).status_code == 204
+    assert (await profile_client.get(f"/api/v1/trap-profiles/{profile_id}")).status_code == 404
     async with profile_app.state.database.session_factory() as session:
-        actions = list(
-            await session.scalars(
-                select(AuditEntry.action)
-                .where(AuditEntry.entity == "trap_profile")
-                .order_by(AuditEntry.id)
-            )
-        )
-    assert actions == ["trap_profile.created", "trap_profile.archived"]
-
-    repeat_archive = await profile_client.delete(
-        f"/api/v1/trap-profiles/{profile_id}",
-        headers={"Origin": "https://test", "If-Match": '"2"'},
-    )
-    update_archived = await profile_client.put(
-        f"/api/v1/trap-profiles/{profile_id}",
-        headers={"Origin": "https://test", "If-Match": '"2"'},
-        json={
-            "name": "Rewritten history",
-            "interaction_level": "low",
-            "services": [{"protocol": "http", "internal_port": 80}],
-        },
-    )
-    assert repeat_archive.status_code == 409
-    assert update_archived.status_code == 409
+        assert not list(await session.scalars(select(AuditEntry).where(AuditEntry.entity_id == profile_id)))
 
 
 async def create_profile(client: httpx.AsyncClient, name: str) -> dict:
@@ -514,7 +480,7 @@ async def test_trap_profile_ui_preserves_settings_and_shows_conflicts() -> None:
                 return
             body = file_path.read_bytes()
             if filename == "profiles.html":
-                scenario = b"""
+                scenario = """
 <script type="module">
 window.confirm = () => true;
 const waitFor = predicate => new Promise(resolve => {
@@ -544,27 +510,27 @@ document.querySelector('.profile-row').click();
   document.querySelector('[name="capture_credentials"]').checked = false;
   document.querySelector('[name="name"]').value = 'Updated SSH';
   document.querySelector('#profile-form').requestSubmit();
-  await waitFor(() => document.querySelector('#version-label').textContent === 'Version 4');
+  await waitFor(() => document.querySelector('#version-label').textContent === 'Версия 4');
   document.querySelector('#remove-profile').click();
-  await waitFor(() => document.querySelector('#notice').textContent === 'Trap Profile archived.');
+  await waitFor(() => document.querySelector('#notice').textContent === 'Профиль ловушки удалён.');
 
   document.querySelector('#new-profile').click();
   document.querySelector('[name="name"]').value = 'Unused HTTP';
   document.querySelector('#profile-form').requestSubmit();
   await waitFor(() => [...document.querySelectorAll('.profile-row strong')].some(node => node.textContent === 'Unused HTTP'));
   document.querySelector('#remove-profile').click();
-  await waitFor(() => document.querySelector('#notice').textContent === 'Unused Trap Profile deleted.');
+  await waitFor(() => document.querySelector('#notice').textContent === 'Профиль ловушки удалён.');
 
   document.querySelector('[name="name"]').value = 'Conflict base';
   document.querySelector('#profile-form').requestSubmit();
   await waitFor(() => [...document.querySelectorAll('.profile-row strong')].some(node => node.textContent === 'Conflict base'));
   document.querySelector('[name="name"]').value = 'Conflict edit';
   document.querySelector('#profile-form').requestSubmit();
-  await waitFor(() => document.querySelector('#notice').textContent.includes('changed elsewhere'));
+  await waitFor(() => document.querySelector('#notice').textContent.includes('изменён в другом окне'));
   document.body.dataset.testResult = loaded && credentialLoaded ? 'passed' : 'failed';
 }
 </script>
-"""
+""".encode("utf-8")
                 body = body.replace(b"</body>", scenario + b"</body>")
             content_type = {
                 ".html": "text/html",
@@ -608,11 +574,7 @@ document.querySelector('.profile-row').click();
             captured.append(
                 {"method": "DELETE", "if_match": self.headers.get("If-Match")}
             )
-            if current["id"] == profile["id"]:
-                current["is_archived"] = True
-                current["version"] = int(current["version"]) + 1
-            else:
-                profiles.remove(current)
+            profiles.remove(current)
             self.send_response(204)
             self.end_headers()
 

@@ -1,107 +1,124 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Trap Profiles · HoneyForge</title>
-  <link rel="stylesheet" href="/app.css" />
+  <title>HoneyForge · Профили ловушек</title>
+  <link rel="stylesheet" href="/app.css?v=20261016-2" />
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="/">HoneyForge</a>
-    <nav aria-label="Control Center">
-      <a href="/events.html">Security Events</a>
-      <a href="/traps.html">Traps</a>
-      <a href="/">Dashboard</a>
-      <span class="operator" id="operator">Operator</span>
-      <button class="button quiet" id="logout" type="button">Log out</button>
+    <nav aria-label="Центр управления">
+      <a href="/index.html">Обзор</a>
+      <a href="/events.html">События безопасности</a>
+      <a href="/traps.html">Ловушки</a>
+      <a href="/profiles.html" aria-current="page">Профили ловушек</a>
+      <details class="operator-menu">
+        <summary><span class="operator" id="operator">Проверка оператора…</span></summary>
+        <div class="operator-dropdown">
+          <button class="button quiet" id="logout" type="button">Выйти</button>
+        </div>
+      </details>
     </nav>
   </header>
   <main class="profiles-shell">
     <section class="profile-index" aria-labelledby="profiles-heading">
       <div class="index-head reveal">
-        <h1 id="profiles-heading">Trap Profiles</h1>
-        <button class="button" id="new-profile" type="button">New</button>
+        <h1 id="profiles-heading">Профили ловушек</h1>
+        <button class="button" id="new-profile" type="button">Создать</button>
       </div>
       <div class="profile-list" id="profile-list" aria-live="polite">
-        <p class="empty">Loading Trap Profiles…</p>
+        <p class="empty">Загрузка профилей ловушек…</p>
       </div>
     </section>
 
     <section class="profile-editor" aria-labelledby="editor-title">
       <div class="editor-heading reveal">
-        <h2 id="editor-title">New Trap Profile</h2>
-        <span class="version" id="version-label">Not saved</span>
+        <h2 id="editor-title">Новый профиль ловушки</h2>
+        <span class="version" id="version-label">Не сохранён</span>
       </div>
       <form class="profile-form" id="profile-form">
         <label class="field reveal">
-          <span>Name</span>
+          <span>Имя</span>
           <input name="name" maxlength="128" required autocomplete="off" />
         </label>
         <label class="field reveal">
-          <span>Interaction level</span>
+          <span>Уровень взаимодействия</span>
           <select name="interaction_level">
-            <option value="low">Low · static responses</option>
-            <option value="medium">Medium · fixed emulation</option>
+            <option value="low">Низкий · статические ответы</option>
+            <option value="medium">Средний · фиксированная эмуляция</option>
           </select>
         </label>
         <div class="services reveal">
           <div class="service-head">
-            <span class="service-title">Service definitions</span>
-            <button class="button secondary" id="add-service" type="button">Add service</button>
+            <span class="service-title">Сервисы</span>
+            <button class="button secondary" id="add-service" type="button">Добавить сервис</button>
           </div>
           <div id="services"></div>
         </div>
         <div class="services reveal">
           <div class="service-head">
-            <span class="service-title">Decoy credentials</span>
-            <button class="button secondary" id="add-credential" type="button">Add credential</button>
+            <span class="service-title">Подставные учётные данные</span>
+            <button class="button secondary" id="add-credential" type="button">Добавить учётные данные</button>
           </div>
-          <p class="hint">Plausible logins the decoy services accept. Leave empty to accept any credentials within the attempt limit.</p>
+          <p class="hint">Подставные логины, которые принимают сервисы-приманки. Оставьте пустым, чтобы принимать любые учётные данные до исчерпания лимита попыток.</p>
           <div id="credentials"></div>
         </div>
         <div class="services reveal">
-          <div class="service-head"><span class="service-title">Logging</span></div>
+          <div class="service-head"><span class="service-title">Журналирование</span></div>
           <div class="options">
-            <label class="check"><input type="checkbox" name="capture_credentials" checked /> Record submitted credentials</label>
-            <label class="check"><input type="checkbox" name="capture_commands" checked /> Record shell commands</label>
-            <label class="check"><input type="checkbox" name="capture_http_bodies" checked /> Record HTTP request bodies</label>
-            <label class="field"><span>Max payload bytes</span><input type="number" name="max_payload_bytes" min="0" max="1048576" value="4096" /></label>
+            <label class="check"><input type="checkbox" name="capture_credentials" checked /> Записывать отправленные учётные данные</label>
+            <label class="check"><input type="checkbox" name="capture_commands" checked /> Записывать команды оболочки</label>
+            <label class="check"><input type="checkbox" name="capture_http_bodies" checked /> Записывать тела HTTP-запросов</label>
+            <label class="field"><span>Макс. размер данных (байт)</span><input type="number" name="max_payload_bytes" min="0" max="1048576" value="4096" /></label>
           </div>
         </div>
         <div class="services reveal">
-          <div class="service-head"><span class="service-title">Masking</span></div>
+          <div class="service-head"><span class="service-title">Маскировка</span></div>
           <div class="options">
-            <label class="field"><span>Beacon interval (seconds)</span><input type="number" name="beacon_interval_seconds" min="1" max="86400" /></label>
-            <label class="field"><span>Beacon jitter (seconds)</span><input type="number" name="beacon_jitter_seconds" min="0" max="86400" /></label>
-            <label class="field"><span>User agent</span><input type="text" name="user_agent" maxlength="256" autocomplete="off" /></label>
+            <label class="field"><span>Интервал связи (сек.)</span><input type="number" name="beacon_interval_seconds" min="1" max="86400" /></label>
+            <label class="field"><span>Разброс интервала (сек.)</span><input type="number" name="beacon_jitter_seconds" min="0" max="86400" /></label>
+            <label class="field"><span>User-Agent</span><input type="text" name="user_agent" maxlength="256" autocomplete="off" /></label>
           </div>
         </div>
         <p class="notice reveal" id="notice" role="status"></p>
         <div class="form-actions reveal">
-          <button class="button" type="submit">Save Trap Profile</button>
-          <button class="button danger" id="remove-profile" type="button" hidden>Delete or archive</button>
+          <button class="button" type="submit">Сохранить профиль ловушки</button>
+          <button class="button danger" id="remove-profile" type="button" hidden>Удалить или архивировать</button>
         </div>
       </form>
     </section>
   </main>
   <template id="service-template">
     <div class="service-row">
-      <label class="field"><span>Protocol</span><select name="protocol"><option>ssh</option><option>http</option><option>mysql</option></select></label>
-      <label class="field"><span>Internal port</span><input name="internal_port" type="number" min="1" max="65535" required /></label>
-      <label class="field banner-field"><span>Banner (optional)</span><input name="banner" maxlength="1024" autocomplete="off" /></label>
-      <label class="field settings-field"><span>Emulator settings (JSON)</span><textarea name="emulator_settings" spellcheck="false">{}</textarea></label>
-      <button class="button quiet remove-service" type="button">Remove</button>
+            <label class="field"><span>Протокол</span><select name="protocol"><option>ssh</option><option>http</option><option>mysql</option></select></label>
+      <label class="field"><span>Внутренний порт</span><input name="internal_port" type="number" min="1" max="65535" required /></label>
+      <label class="field banner-field"><span>Баннер (необязательно)</span><input name="banner" maxlength="1024" autocomplete="off" /></label>
+      <label class="field settings-field"><span>Настройки эмулятора (JSON)</span><textarea name="emulator_settings" spellcheck="false">{}</textarea></label>
+      <button class="button quiet remove-service" type="button">Удалить</button>
     </div>
   </template>
   <template id="credential-template">
     <div class="credential-row">
-      <label class="field"><span>Service</span><select name="credential_service"><option value="">any</option><option>ssh</option><option>http</option><option>mysql</option></select></label>
-      <label class="field"><span>Username</span><input name="credential_username" maxlength="256" autocomplete="off" /></label>
-      <label class="field"><span>Password</span><input name="credential_password" type="password" maxlength="1024" autocomplete="new-password" /></label>
-      <button class="button quiet remove-credential" type="button">Remove</button>
+      <label class="field"><span>Сервис</span><select name="credential_service"><option value="">любой</option><option>ssh</option><option>http</option><option>mysql</option></select></label>
+      <label class="field"><span>Имя пользователя</span><input name="credential_username" maxlength="256" autocomplete="off" /></label>
+      <label class="field"><span>Пароль</span><input name="credential_password" type="password" maxlength="1024" autocomplete="new-password" /></label>
+      <button class="button quiet remove-credential" type="button">Удалить</button>
     </div>
   </template>
   <script type="module" src="/profiles.js"></script>
+  <script>
+    fetch('/api/v1/auth/me', { credentials: 'same-origin' })
+      .then(r => {
+        if (r.status === 401) window.location.replace('/login.html');
+        if (!r.ok) throw new Error('identity unavailable');
+        return r.json();
+      })
+      .then(d => {
+        document.getElementById('operator').textContent = `${d.username} (${d.role === 'admin' ? 'Администратор' : 'Наблюдатель'})`;
+      })
+      .catch(() => { document.getElementById('operator').textContent = 'Не удалось загрузить оператора'; });
+  </script>
 </body>
 </html>

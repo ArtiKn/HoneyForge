@@ -1,38 +1,43 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>HoneyForge · Control Center</title>
-  <link rel="stylesheet" href="/app.css" />
+  <title>HoneyForge · Центр управления</title>
+  <link rel="stylesheet" href="/app.css?v=20261016-2" />
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="/">HoneyForge</a>
-    <nav aria-label="Control Center">
-      <a href="/events.html">Security Events</a>
-      <a href="/traps.html">Traps</a>
-      <a href="/profiles.html">Trap Profiles</a>
-      <span class="operator" id="operator">Checking Operator…</span>
-      <button class="button quiet" id="logout" type="button">Log out</button>
+    <nav aria-label="Центр управления">
+      <a href="/index.html" aria-current="page">Обзор</a>
+      <a href="/events.html">События безопасности</a>
+      <a href="/traps.html">Ловушки</a>
+      <a href="/profiles.html">Профили ловушек</a>
+      <details class="operator-menu">
+        <summary><span class="operator" id="operator">Проверка оператора…</span></summary>
+        <div class="operator-dropdown">
+          <button class="button quiet" id="logout" type="button">Выйти</button>
+        </div>
+      </details>
     </nav>
   </header>
   <main class="dashboard">
-    <h1 class="reveal">Shape the trap before it meets the network.</h1>
-    <p class="lead reveal">Define reusable service behavior once, version every change, and keep the history needed to understand what each Trap presented.</p>
-    <a class="button primary-link reveal" href="/profiles.html">Manage Trap Profiles</a>
+    <h1 class="reveal">Настройте ловушку до подключения к сети.</h1>
+    <p class="lead reveal">Опишите поведение сервисов один раз, версионируйте изменения и храните историю, чтобы понимать, что представляла каждая ловушка.</p>
+    <a class="button primary-link reveal" href="/profiles.html">Управлять профилями ловушек</a>
     <section class="status-board reveal" aria-labelledby="fleet-status-heading">
       <div class="status-heading">
-        <p class="eyebrow">Live fleet</p>
-        <h2 id="fleet-status-heading">Trap status</h2>
+        <p class="eyebrow">Активные ловушки</p>
+        <h2 id="fleet-status-heading">Статус ловушек</h2>
       </div>
       <div class="status-grid" aria-live="polite">
-        <article class="status-card" data-status="provisioning"><strong id="status-provisioning">0</strong><span>Provisioning</span></article>
-        <article class="status-card" data-status="online"><strong id="status-online">0</strong><span>Online</span></article>
-        <article class="status-card" data-status="degraded"><strong id="status-degraded">0</strong><span>Degraded</span></article>
-        <article class="status-card" data-status="offline"><strong id="status-offline">0</strong><span>Offline</span></article>
-        <article class="status-card" data-status="stopped"><strong id="status-stopped">0</strong><span>Stopped</span></article>
-        <article class="status-card" data-status="revoked"><strong id="status-revoked">0</strong><span>Revoked</span></article>
+        <article class="status-card" data-status="provisioning"><strong id="status-provisioning">0</strong><span>Подготовка</span></article>
+        <article class="status-card" data-status="online"><strong id="status-online">0</strong><span>Онлайн</span></article>
+        <article class="status-card" data-status="degraded"><strong id="status-degraded">0</strong><span>Снижена работоспособность</span></article>
+        <article class="status-card" data-status="offline"><strong id="status-offline">0</strong><span>Оффлайн</span></article>
+        <article class="status-card" data-status="stopped"><strong id="status-stopped">0</strong><span>Остановлена</span></article>
+        <article class="status-card" data-status="revoked"><strong id="status-revoked">0</strong><span>Отозвана</span></article>
       </div>
     </section>
   </main>
@@ -44,9 +49,9 @@
         return r.json();
       })
       .then(d => {
-        document.getElementById('operator').textContent = `Operator: ${d.username} (${d.role})`;
+        document.getElementById('operator').textContent = `${d.username} (${d.role === 'admin' ? 'Администратор' : 'Наблюдатель'})`;
       })
-      .catch(() => { document.getElementById('operator').textContent = 'Dashboard unavailable'; });
+      .catch(() => { document.getElementById('operator').textContent = 'Не удалось загрузить оператора'; });
 
     fetch('/api/v1/traps', { credentials: 'same-origin' })
       .then(r => {

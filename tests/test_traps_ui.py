@@ -204,7 +204,7 @@ def test_traps_ui_starts_stops_and_registers_traps_through_the_api() -> None:
     ]
 
 
-_SCENARIO = b"""
+_SCENARIO = """
 <script type="module">
 window.confirm = () => true;
 const waitFor = predicate => new Promise(resolve => {
@@ -232,9 +232,9 @@ await waitFor(() => statusOf('edge-01') === 'online');
 
 document.querySelector('[name="name"]').value = 'edge-03';
 document.querySelector('#trap-form').requestSubmit();
-await waitFor(() => document.querySelector('#enrollment-token').textContent.includes('Enrollment token'));
+await waitFor(() => document.querySelector('#enrollment-token').textContent.includes('Токен регистрации'));
 await waitFor(() => [...document.querySelectorAll('.trap-row td:first-child')]
   .some(cell => cell.textContent === 'edge-03'));
 document.body.dataset.testResult = 'passed';
 </script>
-"""
+""".encode("utf-8")

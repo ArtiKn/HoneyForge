@@ -1,24 +1,34 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>HoneyForge · Operator login</title>
-  <style>
-    body { margin: 2rem; font-family: system-ui, sans-serif; background: #0f1720; color: #e6edf3; }
-    form { display: grid; gap: .75rem; max-width: 22rem; }
-    input, button { box-sizing: border-box; padding: .65rem; font: inherit; }
-    #error { min-height: 1.5rem; color: #ff8b8b; }
-  </style>
+  <title>HoneyForge · Вход оператора</title>
+  <link rel="stylesheet" href="/app.css?v=20261016-2" />
+
 </head>
 <body>
-  <h1>HoneyForge</h1>
-  <form id="login-form">
-    <label>Operator <input name="username" autocomplete="username" required /></label>
-    <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
-    <button type="submit">Log in</button>
-    <p id="error" role="alert"></p>
-  </form>
+  <main class="login-shell">
+    <section class="login-card" aria-labelledby="login-title">
+      <header class="login-head">
+        <p class="eyebrow">Центр управления</p>
+        <h1 id="login-title">HoneyForge</h1>
+      </header>
+      <form class="login-form" id="login-form">
+        <p class="login-hint">Войдите, чтобы управлять ловушками и их профилями.</p>
+        <label class="field">
+          <span>Оператор</span>
+          <input name="username" autocomplete="username" required />
+        </label>
+        <label class="field">
+          <span>Пароль</span>
+          <input name="password" type="password" autocomplete="current-password" required />
+        </label>
+        <button class="button login-submit" type="submit">Войти</button>
+        <p class="notice error" id="error" role="alert"></p>
+      </form>
+    </section>
+  </main>
   <script>
     document.getElementById('login-form').addEventListener('submit', async event => {
       event.preventDefault();
@@ -30,7 +40,7 @@
         body: JSON.stringify({ username: values.get('username'), password: values.get('password') })
       });
       if (response.ok) window.location.replace('/');
-      else document.getElementById('error').textContent = 'Invalid credentials';
+      else document.getElementById('error').textContent = 'Неверное имя оператора или пароль.';
     });
   </script>
 </body>

@@ -1,3 +1,4 @@
+import { startLiveRefresh } from './live-refresh.js';
 import { canManage, loadOperator } from './operator.js';
 
 const api = '/api/v1/trap-profiles';
@@ -12,6 +13,12 @@ const removeButton = document.querySelector('#remove-profile');
 let profiles = [];
 let selected = null;
 let canWrite = true;
+let dirty = false;
+form.addEventListener('input', () => { dirty = true; });
+form.addEventListener('change', () => { dirty = true; });
+form.addEventListener('click', event => {
+  if (event.target.closest('#add-service, #add-credential, .remove-service, .remove-credential')) dirty = true;
+});
 
 function addService(value = {}) {
   const row = template.content.firstElementChild.cloneNode(true);
@@ -87,24 +94,24 @@ function payload() {
 }
 
 async function request(url, options = {}) {
-  const response = await fetch(url, { credentials: 'same-origin', ...options });
+  const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store', ...options });
   if (response.status === 401) {
     window.location.replace('/login.html');
-    throw new Error('Authentication required');
+    throw new Error('Необходимо войти в систему');
   }
   if (response.status === 409) {
-    throw new Error('This Trap Profile changed elsewhere. Reloaded the latest version.');
+    throw new Error('Профиль ловушки изменён в другом окне. Загружена последняя версия.');
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail || 'The Control Center could not complete that action.');
+    throw new Error(body.detail || 'Не удалось выполнить действие в центре управления.');
   }
   return response;
 }
 
 function renderList() {
   if (!profiles.length) {
-    list.innerHTML = '<p class="empty">No Trap Profiles yet. Create the first reusable service definition.</p>';
+    list.innerHTML = '<p class="empty">Профилей ловушек пока нет. Создайте первый профиль с настройками сервисов.</p>';
     return;
   }
   list.replaceChildren(...profiles.map(profile => {
@@ -116,15 +123,16 @@ function renderList() {
     row.innerHTML = `<strong></strong><span class="profile-meta"><span></span><span></span><span></span></span>`;
     row.querySelector('strong').textContent = profile.name;
     const meta = row.querySelectorAll('.profile-meta span');
-    meta[0].textContent = profile.interaction_level;
+    meta[0].textContent = { low: 'Низкий уровень', medium: 'Средний уровень', high: 'Высокий уровень' }[profile.interaction_level] || profile.interaction_level;
     meta[1].textContent = `v${profile.version}`;
-    meta[2].textContent = profile.is_archived ? 'archived' : `${profile.services.length} service${profile.services.length === 1 ? '' : 's'}`;
+    meta[2].textContent = profile.is_archived ? 'В архиве' : `Сервисов: ${profile.services.length}`;
     row.addEventListener('click', () => selectProfile(profile));
     return row;
   }));
 }
 
 function selectProfile(profile) {
+  dirty = false;
   selected = profile;
   form.elements.name.value = profile.name;
   form.elements.interaction_level.value = profile.interaction_level;
@@ -142,7 +150,7 @@ function selectProfile(profile) {
   form.elements.beacon_jitter_seconds.value = masking.beacon_jitter_seconds ?? '';
   form.elements.user_agent.value = masking.user_agent || '';
   document.querySelector('#editor-title').textContent = profile.name;
-  document.querySelector('#version-label').textContent = `Version ${profile.version}`;
+  document.querySelector('#version-label').textContent = `Версия ${profile.version}`;
   const locked = profile.is_archived || !canWrite;
   removeButton.hidden = !canWrite;
   removeButton.disabled = profile.is_archived;
@@ -153,30 +161,31 @@ function selectProfile(profile) {
     if (control !== removeButton) control.disabled = locked;
   });
   if (!canWrite) {
-    notice.textContent = 'Read-only Operator: your role cannot change Trap Profiles.';
+    notice.textContent = 'Доступ только для просмотра: ваша роль не позволяет изменять профили ловушек.';
   } else {
-    notice.textContent = profile.is_archived ? 'Archived Trap Profiles remain readable for historical context.' : '';
+    notice.textContent = profile.is_archived ? 'Архивный профиль ловушки доступен для просмотра истории настроек.' : '';
   }
   notice.className = 'notice';
   renderList();
 }
 
 function newProfile() {
+  dirty = false;
   selected = null;
   form.reset();
   services.replaceChildren();
   credentials.replaceChildren();
   addService({ protocol: 'ssh', internal_port: 22 });
   form.elements.max_payload_bytes.value = 4096;
-  document.querySelector('#editor-title').textContent = 'New Trap Profile';
-  document.querySelector('#version-label').textContent = 'Not saved';
+  document.querySelector('#editor-title').textContent = 'Новый профиль ловушки';
+  document.querySelector('#version-label').textContent = 'Не сохранён';
   removeButton.hidden = true;
   removeButton.disabled = false;
   form.querySelector('[type="submit"]').disabled = !canWrite;
   document.querySelector('#add-service').disabled = !canWrite;
   document.querySelector('#add-credential').disabled = !canWrite;
   [...form.elements].forEach(control => { control.disabled = !canWrite; });
-  notice.textContent = canWrite ? '' : 'Read-only Operator: your role cannot change Trap Profiles.';
+  notice.textContent = canWrite ? '' : 'Доступ только для просмотра: ваша роль не позволяет изменять профили ловушек.';
   notice.className = 'notice';
   renderList();
   form.elements.name.focus();
@@ -187,14 +196,14 @@ async function loadProfiles(preferredId = selected?.id) {
   profiles = await response.json();
   const preferred = profiles.find(profile => profile.id === preferredId);
   if (preferred) selectProfile(preferred);
-  else if (profiles.length && selected) selectProfile(profiles[0]);
+  else if (selected) newProfile();
   else renderList();
 }
 
 form.addEventListener('submit', async event => {
   event.preventDefault();
   if (!canWrite) return;
-  notice.textContent = 'Saving…';
+  notice.textContent = 'Сохранение…';
   notice.className = 'notice';
   try {
     const response = await request(selected ? `${api}/${selected.id}` : api, {
@@ -206,13 +215,13 @@ form.addEventListener('submit', async event => {
       body: JSON.stringify(payload()),
     });
     const saved = await response.json();
-    notice.textContent = selected ? `Saved version ${saved.version}.` : 'Trap Profile created.';
+    notice.textContent = selected ? `Сохранена версия ${saved.version}.` : 'Профиль ловушки создан.';
     await loadProfiles(saved.id);
   } catch (error) {
     const message = error instanceof SyntaxError
-      ? 'Emulator settings must be valid JSON.'
+      ? 'Настройки эмулятора должны содержать корректный JSON.'
       : error.message;
-    if (message.includes('changed elsewhere')) await loadProfiles();
+    if (message.includes('изменён в другом окне')) await loadProfiles();
     notice.textContent = message;
     notice.className = 'notice error';
   }
@@ -220,7 +229,7 @@ form.addEventListener('submit', async event => {
 
 removeButton.addEventListener('click', async () => {
   if (!canWrite) return;
-  if (!selected || !window.confirm(`Delete or archive “${selected.name}”?`)) return;
+  if (!selected || !window.confirm(`Удалить профиль ловушки «${selected.name}»? Если он уже использовался, он будет перемещён в архив.`)) return;
   try {
     await request(`${api}/${selected.id}`, {
       method: 'DELETE',
@@ -231,10 +240,10 @@ removeButton.addEventListener('click', async () => {
     await loadProfiles(oldId);
     const retained = profiles.find(profile => profile.id === oldId);
     if (retained) selectProfile(retained); else newProfile();
-    notice.textContent = retained ? 'Trap Profile archived.' : 'Unused Trap Profile deleted.';
+    notice.textContent = retained ? 'Профиль ловушки перемещён в архив.' : 'Неиспользуемый профиль ловушки удалён.';
   } catch (error) {
     const message = error.message;
-    if (message.includes('changed elsewhere')) await loadProfiles();
+    if (message.includes('изменён в другом окне')) await loadProfiles();
     notice.textContent = message;
     notice.className = 'notice error';
   }
@@ -262,3 +271,19 @@ loadOperator()
       notice.className = 'notice error';
     });
   });
+
+startLiveRefresh(async () => {
+  const updated = await (await request(api)).json();
+  const current = updated.find(profile => profile.id === selected?.id);
+  profiles = updated;
+  if (selected && !current) {
+    newProfile();
+    notice.textContent = 'Выбранный профиль ловушки удалён.';
+  } else if (current && JSON.stringify(current) !== JSON.stringify(selected)) {
+    if (!dirty) selectProfile(current);
+    else {
+      notice.textContent = 'Профиль изменён в другом окне. Откройте его заново, чтобы загрузить изменения; несохранённые правки сохранены в форме.';
+      renderList();
+    }
+  } else renderList();
+});

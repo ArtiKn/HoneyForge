@@ -85,7 +85,7 @@ def test_security_events_ui_renders_persisted_ssh_interaction() -> None:
         server.server_close()
         thread.join(timeout=2)
 
-    assert "Connection opened" in result.stdout
+    assert "Соединение открыто" in result.stdout
     assert "192.0.2.44:54321" in result.stdout
     assert "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.10" in result.stdout
 
@@ -229,5 +229,5 @@ def test_security_events_ui_recovers_a_gap_and_deduplicates_realtime_events() ->
     assert result.stdout.count('class="security-event reveal"') == 3
     for number in (1, 2, 3):
         assert result.stdout.count(f"SSH-event-{number}") == 1
-    assert result.stdout.count('class="event-time-label">Observed</span>') == 3
-    assert result.stdout.count('class="event-time-label">Received</span>') == 3
+    assert result.stdout.count('class="event-time-label">Зафиксировано</span>') == 3
+    assert result.stdout.count('class="event-time-label">Получено</span>') == 3

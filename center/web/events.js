@@ -1,9 +1,9 @@
 const labels = {
-  connection_opened: 'Connection opened',
-  connection_closed: 'Connection closed',
-  authentication_attempt: 'Authentication attempt',
-  command_entered: 'Command entered',
-  http_request: 'HTTP request',
+  connection_opened: 'Соединение открыто',
+  connection_closed: 'Соединение закрыто',
+  authentication_attempt: 'Попытка аутентификации',
+  command_entered: 'Введена команда',
+  http_request: 'HTTP-запрос',
 };
 
 function renderEvent(event) {
@@ -13,8 +13,8 @@ function renderEvent(event) {
   const times = document.createElement('div');
   times.className = 'event-times';
   for (const [label, value] of [
-    ['Received', event.received_at],
-    ['Observed', event.observed_at],
+    ['Получено', event.received_at],
+    ['Зафиксировано', event.observed_at],
   ]) {
     const row = document.createElement('span');
     const caption = document.createElement('span');
@@ -22,7 +22,7 @@ function renderEvent(event) {
     caption.textContent = label;
     const time = document.createElement('time');
     time.dateTime = value;
-    time.textContent = new Date(value).toLocaleString();
+    time.textContent = new Date(value).toLocaleString('ru-RU');
     row.append(caption, time);
     times.append(row);
   }
@@ -58,23 +58,54 @@ for (const name of filterNames) {
   const value = pageParams.get(name);
   if (!value) continue;
   filterParams.set(name, value);
-  const field = filtersForm.elements.namedItem(name);
-  field.value = name.startsWith('received_')
-    ? new Date(value).toISOString().slice(0, 16)
-    : value;
+  if (name.startsWith('received_')) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) continue;
+    const pad = number => String(number).padStart(2, '0');
+    filtersForm.elements.namedItem(`${name}_date`).value =
+      `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    filtersForm.elements.namedItem(`${name}_time`).value =
+      `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  } else {
+    filtersForm.elements.namedItem(name).value = value;
+  }
 }
+
 let reconnectDelay = 250;
 let activeSocket = null;
+
+for (const name of ['received_from', 'received_to']) {
+  const date = filtersForm.elements.namedItem(`${name}_date`);
+  const time = filtersForm.elements.namedItem(`${name}_time`);
+  const validate = () => {
+    date.setCustomValidity(time.value && !date.value ? 'Укажите дату для выбранного времени.' : '');
+  };
+  date.addEventListener('input', validate);
+  time.addEventListener('input', validate);
+}
 
 filtersForm.addEventListener('submit', event => {
   event.preventDefault();
   const target = new URLSearchParams();
-  for (const [name, value] of new FormData(filtersForm)) {
-    if (!value) continue;
-    target.set(
-      name,
-      name.startsWith('received_') ? new Date(value).toISOString() : value,
-    );
+  for (const name of filterNames) {
+    let value;
+    if (name.startsWith('received_')) {
+      const date = filtersForm.elements.namedItem(`${name}_date`).value;
+      const time = filtersForm.elements.namedItem(`${name}_time`).value;
+      if (!date) continue;
+      value = new Date(`${date}T${time || (name === 'received_to' ? '23:59:59' : '00:00:00')}`).toISOString();
+    } else {
+      value = filtersForm.elements.namedItem(name).value;
+    }
+    if (value) target.set(name, value);
+  }
+  const from = target.get('received_from');
+  const to = target.get('received_to');
+  if (from && to && Date.parse(from) > Date.parse(to)) {
+    const date = filtersForm.elements.namedItem('received_to_date');
+    date.setCustomValidity('Конец периода должен быть не раньше начала.');
+    date.reportValidity();
+    return;
   }
   const query = target.toString();
   location.assign(query ? `/events.html?${query}` : '/events.html');
@@ -127,9 +158,9 @@ async function fetchPage(url) {
   const response = await fetch(url, { credentials: 'same-origin' });
   if (response.status === 401) {
     window.location.replace('/login.html');
-    throw new Error('Authentication required');
+    throw new Error('Требуется вход оператора');
   }
-  if (!response.ok) throw new Error('Security Events unavailable');
+  if (!response.ok) throw new Error('Не удалось загрузить события безопасности');
   return response.json();
 }
 
@@ -183,5 +214,5 @@ fetchPage(securityEventsUrl())
     connectRealtime();
   })
   .catch(() => {
-    emptyState.textContent = 'Security Events unavailable.';
+    emptyState.textContent = 'Не удалось загрузить события безопасности.';
   });

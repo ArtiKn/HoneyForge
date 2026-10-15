@@ -1,50 +1,88 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>HoneyForge · Security Events</title>
-  <link rel="stylesheet" href="/app.css" />
+  <title>HoneyForge · События безопасности</title>
+  <link rel="stylesheet" href="/app.css?v=20261016-2" />
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="/">HoneyForge</a>
-    <nav aria-label="Control Center">
-      <a href="/events.html" aria-current="page">Security Events</a>
-      <a href="/traps.html">Traps</a>
-      <a href="/profiles.html">Trap Profiles</a>
+    <nav aria-label="Центр управления">
+      <a href="/index.html">Обзор</a>
+      <a href="/events.html" aria-current="page">События безопасности</a>
+      <a href="/traps.html">Ловушки</a>
+      <a href="/profiles.html">Профили ловушек</a>
+      <details class="operator-menu">
+        <summary><span class="operator" id="operator">Проверка оператора…</span></summary>
+        <div class="operator-dropdown">
+          <button class="button quiet" id="logout" type="button">Выйти</button>
+        </div>
+      </details>
     </nav>
   </header>
   <main class="events-shell">
     <header class="events-heading reveal">
-      <p class="eyebrow">Observed activity</p>
-      <h1>Security Events</h1>
-      <p>Durable observations reported by deployed Traps.</p>
+            <p class="eyebrow">Наблюдаемая активность</p>
+      <h1>События безопасности</h1>
+      <p>События, полученные от развёрнутых ловушек.</p>
     </header>
     <form class="event-filters" id="event-filters" action="/events.html" method="get">
-      <label>Trap ID <input name="trap_id" type="text" autocomplete="off" /></label>
-      <label>Attack Session ID <input name="attack_session_id" type="text" autocomplete="off" /></label>
-      <label>Event type
+      <label>ID ловушки<input name="trap_id" type="text" autocomplete="off" /></label>
+      <label>ID сессии атаки<input name="attack_session_id" type="text" autocomplete="off" /></label>
+      <label>Тип события
         <select name="event_type">
-          <option value="">All event types</option>
-          <option value="connection_opened">Connection opened</option>
-          <option value="authentication_attempt">Authentication attempt</option>
-          <option value="command_entered">Command entered</option>
-          <option value="http_request">HTTP request</option>
-          <option value="connection_closed">Connection closed</option>
+          <option value="">Все типы событий</option>
+          <option value="connection_opened">Соединение открыто</option>
+          <option value="authentication_attempt">Попытка аутентификации</option>
+          <option value="command_entered">Введена команда</option>
+          <option value="http_request">HTTP-запрос</option>
+          <option value="connection_closed">Соединение закрыто</option>
         </select>
       </label>
-      <label>Source IP <input name="source_ip" type="text" autocomplete="off" /></label>
-      <label>Received from <input name="received_from" type="datetime-local" /></label>
-      <label>Received to <input name="received_to" type="datetime-local" /></label>
+      <label>IP источника <input name="source_ip" type="text" autocomplete="off" /></label>
+      <fieldset class="datetime-filter">
+        <legend>Получено с</legend>
+        <div class="datetime-inputs">
+          <label>Дата<input name="received_from_date" type="date" /></label>
+          <label>Время<input name="received_from_time" type="time" step="1" /></label>
+        </div>
+      </fieldset>
+      <fieldset class="datetime-filter">
+        <legend>Получено по</legend>
+        <div class="datetime-inputs">
+          <label>Дата<input name="received_to_date" type="date" /></label>
+          <label>Время<input name="received_to_time" type="time" step="1" /></label>
+        </div>
+      </fieldset>
+      <p class="hint filter-timezone">Дата и время указаны в часовом поясе вашего устройства.</p>
       <div class="filter-actions">
-        <button class="button" type="submit">Apply filters</button>
-        <a class="button quiet" href="/events.html">Clear</a>
+        <button class="button" type="submit">Применить фильтры</button>
+        <a class="button quiet" href="/events.html">Сбросить</a>
       </div>
     </form>
     <ol class="event-stream" id="event-stream" aria-live="polite"></ol>
-    <p class="empty-events" id="empty-events">No Security Events received.</p>
+    <p class="empty-events" id="empty-events">События безопасности отсутствуют.</p>
   </main>
   <script src="/events.js" defer></script>
+  <script>
+    document.getElementById('logout').addEventListener('click', async () => {
+      await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'same-origin' });
+      window.location.replace('/login.html');
+    });
+  </script>
+  <script>
+    fetch('/api/v1/auth/me', { credentials: 'same-origin' })
+      .then(r => {
+        if (r.status === 401) window.location.replace('/login.html');
+        if (!r.ok) throw new Error('identity unavailable');
+        return r.json();
+      })
+      .then(d => {
+        document.getElementById('operator').textContent = `${d.username} (${d.role === 'admin' ? 'Администратор' : 'Наблюдатель'})`;
+      })
+      .catch(() => { document.getElementById('operator').textContent = 'Не удалось загрузить оператора'; });
+  </script>
 </body>
 </html>

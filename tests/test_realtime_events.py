@@ -1,7 +1,4 @@
 import asyncio
-import os
-import subprocess
-import sys
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -21,26 +18,10 @@ def _asyncpg_url(database_url: str) -> str:
 
 
 @pytest.fixture
-async def realtime_database_url() -> str:
-    database_url = os.getenv("TEST_DATABASE_URL")
-    if not database_url:
-        pytest.skip("set TEST_DATABASE_URL to run realtime integration tests")
-    environment = os.environ | {"DATABASE_URL": database_url}
-    subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
-        check=True,
-        env=environment,
-        capture_output=True,
-        text=True,
-    )
-    yield database_url
-    subprocess.run(
-        [sys.executable, "-m", "alembic", "downgrade", "base"],
-        check=True,
-        env=environment,
-        capture_output=True,
-        text=True,
-    )
+def realtime_database_url(migrated_database_url: str) -> str:
+    """Migrated PostgreSQL URL for the realtime integration seam."""
+
+    return migrated_database_url
 
 
 async def _seed_event_parents(connection: asyncpg.Connection) -> tuple[UUID, UUID]:

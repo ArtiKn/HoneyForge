@@ -1,4 +1,6 @@
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -30,3 +32,15 @@ def create_test_certificate(
         capture_output=True,
     )
     return certificate, private_key
+
+
+def run_migrations(database_url: str, *arguments: str) -> None:
+    """Apply or revert Alembic migrations against one database URL."""
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", *arguments],
+        check=True,
+        env=os.environ | {"DATABASE_URL": database_url},
+        capture_output=True,
+        text=True,
+    )

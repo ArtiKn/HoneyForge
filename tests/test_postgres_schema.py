@@ -1,31 +1,18 @@
-import os
-import subprocess
-import sys
-
 import pytest
 from sqlalchemy import inspect
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from tests.support import run_migrations
+
 
 @pytest.mark.asyncio
-async def test_canonical_schema_applies_to_real_postgresql() -> None:
-    database_url = os.getenv("TEST_DATABASE_URL")
-    if not database_url:
-        pytest.skip("set TEST_DATABASE_URL to run the PostgreSQL integration seam")
-
-    if not (make_url(database_url).database or "").endswith("_test"):
+async def test_canonical_schema_applies_to_real_postgresql(test_database_url: str) -> None:
+    if not (make_url(test_database_url).database or "").endswith("_test"):
         pytest.fail("TEST_DATABASE_URL must name a dedicated database ending in _test")
 
-    environment = os.environ | {"DATABASE_URL": database_url}
-    subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
-        check=True,
-        env=environment,
-        capture_output=True,
-        text=True,
-    )
-    engine = create_async_engine(database_url)
+    run_migrations(test_database_url, "upgrade", "head")
+    engine = create_async_engine(test_database_url)
     try:
         async with engine.connect() as connection:
             table_names = await connection.run_sync(
@@ -52,10 +39,4 @@ async def test_canonical_schema_applies_to_real_postgresql() -> None:
         } <= security_event_indexes
     finally:
         await engine.dispose()
-        subprocess.run(
-            [sys.executable, "-m", "alembic", "downgrade", "base"],
-            check=True,
-            env=environment,
-            capture_output=True,
-            text=True,
-        )
+        run_migrations(test_database_url, "downgrade", "base")

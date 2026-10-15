@@ -1,8 +1,6 @@
-import os
 import json
 import shutil
 import subprocess
-import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -11,8 +9,6 @@ import httpx
 import pytest
 from sqlalchemy import select
 
-from center.api.config import Settings
-from center.api.main import create_app
 from center.api.models import AuditEntry, Trap
 
 
@@ -20,53 +16,17 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture
-async def profile_app():
-    database_url = os.getenv("TEST_DATABASE_URL")
-    if not database_url:
-        pytest.skip("set TEST_DATABASE_URL to run Trap Profile API tests")
+async def profile_app(postgres_application):
+    """PostgreSQL-backed Control API shared with the authenticated client."""
 
-    environment = os.environ | {"DATABASE_URL": database_url}
-    subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
-        check=True,
-        env=environment,
-        capture_output=True,
-        text=True,
-    )
-    application = create_app(
-        Settings(
-            database_url=database_url,
-            jwt_secret="test-secret-that-is-long-enough",
-            operator_username="operator",
-            operator_password="correct horse battery staple",
-            cors_origins=["https://test"],
-        )
-    )
-    async with application.router.lifespan_context(application):
-        yield application
-    subprocess.run(
-        [sys.executable, "-m", "alembic", "downgrade", "base"],
-        check=True,
-        env=environment,
-        capture_output=True,
-        text=True,
-    )
+    yield postgres_application
 
 
 @pytest.fixture
-async def profile_client(profile_app):
-    transport = httpx.ASGITransport(app=profile_app)
-    async with httpx.AsyncClient(transport=transport, base_url="https://test") as client:
-        login = await client.post(
-            "/api/v1/auth/login",
-            headers={"Origin": "https://test"},
-            json={
-                "username": "operator",
-                "password": "correct horse battery staple",
-            },
-        )
-        assert login.status_code == 204
-        yield client
+async def profile_client(operator_client):
+    """Authenticated API client sharing the PostgreSQL-backed application."""
+
+    yield operator_client
 
 
 async def test_trap_profile_api_requires_an_operator(profile_app) -> None:

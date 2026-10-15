@@ -1,11 +1,9 @@
 import asyncio
 import json
-import os
 import shutil
 import socket
 import ssl
 import subprocess
-import sys
 import threading
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -33,8 +31,6 @@ from agent.low.profile_runtime import (
 )
 from agent.medium.main import MediumSshService
 from agent.medium.http_service import MediumHttpService
-from center.api.config import Settings
-from center.api.main import create_app
 from center.api.models import AttackSession, AuditEntry, SecurityEvent, Trap
 from tests.support import create_test_certificate
 
@@ -43,53 +39,17 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture
-async def lifecycle_app():
-    database_url = os.getenv("TEST_DATABASE_URL")
-    if not database_url:
-        pytest.skip("set TEST_DATABASE_URL to run Trap lifecycle tests")
-    environment = os.environ | {"DATABASE_URL": database_url}
-    subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
-        check=True,
-        env=environment,
-        capture_output=True,
-        text=True,
-    )
-    application = create_app(
-        Settings(
-            database_url=database_url,
-            jwt_secret="test-secret-that-is-long-enough",
-            operator_username="operator",
-            operator_password="correct horse battery staple",
-            cors_origins=["https://test"],
-            health_timeout_seconds=90,
-        )
-    )
-    async with application.router.lifespan_context(application):
-        yield application
-    subprocess.run(
-        [sys.executable, "-m", "alembic", "downgrade", "base"],
-        check=True,
-        env=environment,
-        capture_output=True,
-        text=True,
-    )
+async def lifecycle_app(postgres_application):
+    """PostgreSQL-backed Control API shared with the authenticated client."""
+
+    yield postgres_application
 
 
 @pytest.fixture
-async def lifecycle_client(lifecycle_app):
-    transport = httpx.ASGITransport(app=lifecycle_app)
-    async with httpx.AsyncClient(transport=transport, base_url="https://test") as client:
-        login = await client.post(
-            "/api/v1/auth/login",
-            headers={"Origin": "https://test"},
-            json={
-                "username": "operator",
-                "password": "correct horse battery staple",
-            },
-        )
-        assert login.status_code == 204
-        yield client
+async def lifecycle_client(operator_client):
+    """Authenticated API client sharing the PostgreSQL-backed application."""
+
+    yield operator_client
 
 
 async def create_profile(

@@ -1,9 +1,5 @@
-import os
-import subprocess
-import sys
 from collections.abc import AsyncIterator
 
-import httpx
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -18,43 +14,17 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture
-async def auth_app():
-    database_url = os.getenv("TEST_DATABASE_URL")
-    if not database_url:
-        pytest.skip("set TEST_DATABASE_URL to run Operator authentication tests")
+async def auth_app(postgres_application):
+    """PostgreSQL-backed Control API shared with the anonymous client."""
 
-    environment = os.environ | {"DATABASE_URL": database_url}
-    subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
-        check=True,
-        env=environment,
-        capture_output=True,
-        text=True,
-    )
-    settings = Settings(
-        database_url=database_url,
-        jwt_secret="test-secret-that-is-long-enough",
-        operator_username="operator",
-        operator_password="correct horse battery staple",
-        cors_origins=["https://test"],
-    )
-    application = create_app(settings)
-    async with application.router.lifespan_context(application):
-        yield application
-    subprocess.run(
-        [sys.executable, "-m", "alembic", "downgrade", "base"],
-        check=True,
-        env=environment,
-        capture_output=True,
-        text=True,
-    )
+    yield postgres_application
 
 
 @pytest.fixture
-async def auth_client(auth_app):
-    transport = httpx.ASGITransport(app=auth_app)
-    async with httpx.AsyncClient(transport=transport, base_url="https://test") as client:
-        yield client
+async def auth_client(anonymous_client):
+    """Unauthenticated API client sharing the PostgreSQL-backed application."""
+
+    yield anonymous_client
 
 
 async def test_operator_can_login_reach_dashboard_and_logout(auth_app, auth_client) -> None:

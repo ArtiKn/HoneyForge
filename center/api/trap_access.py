@@ -104,6 +104,34 @@ class TrapAccess:
         trap.previous_secret_valid_until = None
         self._audit(trap, "trap.revoked", source_ip, operator_id)
 
+    def set_enabled(
+        self, trap: Trap, enabled: bool, operator_id: UUID, source_ip: str | None
+    ) -> bool:
+        """Apply the operator's desired state; return whether it changed."""
+
+        if trap.enabled == enabled:
+            return False
+        trap.enabled = enabled
+        self._audit(
+            trap,
+            "trap.started" if enabled else "trap.stopped",
+            source_ip,
+            operator_id,
+        )
+        return True
+
+    def archive(self, trap: Trap, operator_id: UUID, source_ip: str | None) -> bool:
+        """Soft-archive a Trap and stop its services; return whether it changed."""
+
+        if trap.is_archived:
+            return False
+        trap.is_archived = True
+        trap.enabled = False
+        trap.enrollment_token_hash = None
+        trap.enrollment_token_expires_at = None
+        self._audit(trap, "trap.archived", source_ip, operator_id)
+        return True
+
     def report_health(
         self,
         trap: Trap,
@@ -113,6 +141,7 @@ class TrapAccess:
         buffer_depth: int,
         configuration_errors: list[str],
         buffer_loss: dict[str, object] | None = None,
+        enabled: bool | None = None,
     ) -> None:
         trap.last_seen_at = self.now
         trap.agent_version = agent_version
@@ -121,6 +150,8 @@ class TrapAccess:
             "buffer_depth": buffer_depth,
             "configuration_errors": configuration_errors,
         }
+        if enabled is not None:
+            agent_meta["enabled_applied"] = enabled
         if buffer_loss is not None:
             agent_meta["buffer_loss"] = buffer_loss
         elif "buffer_loss" in trap.agent_meta:

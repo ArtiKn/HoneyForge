@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Traps · HoneyForge</title>
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">HoneyForge</a>
+    <nav aria-label="Control Center">
+      <a href="/events.html">Security Events</a>
+      <a href="/traps.html" aria-current="page">Traps</a>
+      <a href="/profiles.html">Trap Profiles</a>
+      <a href="/">Dashboard</a>
+      <span class="operator" id="operator">Operator</span>
+      <button class="button quiet" id="logout" type="button">Log out</button>
+    </nav>
+  </header>
+  <main class="traps-shell">
+    <header class="traps-heading reveal">
+      <div>
+        <p class="eyebrow">Deployed fleet</p>
+        <h1>Traps</h1>
+        <p>Register a Trap, issue its enrollment token, and start or stop the services it presents.</p>
+      </div>
+    </header>
+
+    <section class="trap-register reveal" aria-labelledby="register-heading">
+      <div class="register-head">
+        <h2 id="register-heading">Register a Trap</h2>
+        <span class="version" id="enrollment-token" role="status"></span>
+      </div>
+      <form class="trap-form" id="trap-form">
+        <label class="field">
+          <span>Trap name</span>
+          <input name="name" maxlength="128" required autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Trap Profile</span>
+          <select name="trap_profile_id" required></select>
+        </label>
+        <label class="field">
+          <span>Hostname (optional)</span>
+          <input name="hostname" maxlength="255" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Region (optional)</span>
+          <input name="region" maxlength="128" autocomplete="off" />
+        </label>
+        <div class="form-actions">
+          <button class="button" type="submit">Register Trap</button>
+        </div>
+        <p class="notice" id="notice" role="status"></p>
+      </form>
+    </section>
+
+    <section class="trap-table-wrap reveal" aria-labelledby="fleet-heading">
+      <div class="table-heading">
+        <h2 id="fleet-heading">Fleet</h2>
+        <button class="button secondary" id="refresh" type="button">Refresh</button>
+      </div>
+      <div class="table-scroll">
+        <table class="trap-table">
+          <thead>
+            <tr>
+              <th scope="col">Name</th>
+              <th scope="col">Profile</th>
+              <th scope="col">Status</th>
+              <th scope="col">Last seen</th>
+              <th scope="col">IP</th>
+              <th scope="col">Hostname</th>
+              <th scope="col">Enabled</th>
+              <th scope="col">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="trap-list" aria-live="polite">
+            <tr><td colspan="8" class="empty">Loading Traps…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="/traps.js"></script>
+</body>
+</html>

@@ -28,7 +28,7 @@ class ProfileApplyError(RuntimeError):
 class HealthReporter(Protocol):
     async def report_health(
         self, queue: Any, *, agent_version: str, active_profile_version: int,
-        configuration_errors: list[str],
+        enabled: bool, configuration_errors: list[str],
     ) -> None: ...
 
 
@@ -44,6 +44,7 @@ async def report_runtime_health(
         queue,
         agent_version=agent_version,
         active_profile_version=runtime.active_profile_version,
+        enabled=runtime.enabled,
         configuration_errors=runtime.configuration_errors,
     )
 
@@ -57,6 +58,7 @@ class ProfileRuntime:
         self._build_services = build_services
         self._active_configuration: dict[str, Any] | None = None
         self._active_services: list[TrapService] = []
+        self._enabled = True
         self._retirement_tasks: set[asyncio.Task[None]] = set()
         self._configuration_errors: list[str] = []
         self._retirement_errors: list[str] = []
@@ -68,21 +70,34 @@ class ProfileRuntime:
         return int(self._active_configuration["profile_version"])
 
     @property
+    def enabled(self) -> bool:
+        """Whether the active Trap Profile's services are currently accepting."""
+
+        return self._enabled
+
+    @property
     def configuration_errors(self) -> list[str]:
         return [*self._configuration_errors, *self._retirement_errors]
 
     async def start(self, configuration: dict[str, Any]) -> None:
         if self._active_configuration is not None:
             raise RuntimeError("A Trap Profile is already active")
+        enabled = bool(configuration.get("enabled", True))
         services = self._build_services(configuration)
-        try:
-            await self._activate(services)
-        except Exception:
+        if enabled:
+            try:
+                await self._activate(services)
+            except Exception:
+                for service in services:
+                    await service.stop()
+                raise
+            self._active_services = services
+        else:
             for service in services:
                 await service.stop()
-            raise
+            self._active_services = []
         self._active_configuration = configuration
-        self._active_services = services
+        self._enabled = enabled
         self._configuration_errors = []
 
     async def refresh(
@@ -104,8 +119,27 @@ class ProfileRuntime:
             candidate_version = int(configuration["profile_version"])
         except (KeyError, TypeError, ValueError) as exc:
             raise ProfileApplyError(f"Invalid Trap Profile: {exc}") from exc
+        candidate_enabled = bool(configuration.get("enabled", True))
         if candidate_version <= self.active_profile_version:
+            if (
+                candidate_version == self.active_profile_version
+                and candidate_enabled != self._enabled
+            ):
+                if candidate_enabled:
+                    await self._enable(configuration)
+                else:
+                    await self._disable()
+                self._enabled = candidate_enabled
+                self._active_configuration = configuration
+                return True
             return False
+
+        if not candidate_enabled:
+            if self._enabled:
+                await self._disable()
+            self._active_configuration = configuration
+            self._enabled = False
+            return True
 
         try:
             candidate_services = self._build_services(configuration)
@@ -142,7 +176,37 @@ class ProfileRuntime:
             task.add_done_callback(self._retirement_finished)
         self._active_services = candidate_services
         self._active_configuration = configuration
+        self._enabled = True
         return True
+
+    async def _enable(self, configuration: dict[str, Any]) -> None:
+        """Start accepting again from the active Trap Profile."""
+
+        try:
+            services = self._build_services(configuration)
+        except Exception as exc:
+            raise ProfileApplyError(f"Invalid Trap Profile: {exc}") from exc
+        try:
+            await self._activate(services)
+        except Exception as exc:
+            raise ProfileApplyError(str(exc)) from exc
+        self._active_services = services
+        self._configuration_errors = []
+
+    async def _disable(self) -> None:
+        """Stop accepting while keeping the Agent and its buffer delivery alive."""
+
+        previous_services = self._active_services
+        self._active_services = []
+        for service in previous_services:
+            try:
+                await service.stop_accepting()
+            except Exception:
+                pass
+        for service in previous_services:
+            task = asyncio.create_task(self._retire(service))
+            self._retirement_tasks.add(task)
+            task.add_done_callback(self._retirement_finished)
 
     async def stop(self) -> None:
         if self._retirement_tasks:

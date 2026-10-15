@@ -27,6 +27,9 @@ class Trap(CreatedAtMixin, Base):
     ip_address: Mapped[str | None] = mapped_column(INET)
     hostname: Mapped[str | None] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(16), default="provisioning", nullable=False)
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False
+    )
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     agent_version: Mapped[str | None] = mapped_column(String(64))
     region: Mapped[str | None] = mapped_column(String(128))
@@ -52,4 +55,14 @@ class Trap(CreatedAtMixin, Base):
     attack_sessions: Mapped[list["AttackSession"]] = relationship(  # noqa: F821
         back_populates="trap"
     )
+
+    @property
+    def display_status(self) -> str:
+        """Operator-facing state: ``revoked`` and ``stopped`` take precedence."""
+
+        if self.status == "revoked":
+            return "revoked"
+        if not self.enabled:
+            return "stopped"
+        return self.status
 

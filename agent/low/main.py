@@ -99,7 +99,12 @@ async def run() -> None:
             now = asyncio.get_running_loop().time()
             if now >= next_profile_at:
                 try:
-                    await runtime.refresh(client.fetch_configuration)
+                    if await runtime.refresh(client.fetch_configuration):
+                        log.info(
+                            "Applied Trap Profile change (enabled=%s, version=%s)",
+                            runtime.enabled,
+                            runtime.active_profile_version,
+                        )
                 except (OSError, URLError, RuntimeError, ValueError):
                     log.exception("Trap Profile check or apply failed")
                 next_profile_at = now + profile_interval

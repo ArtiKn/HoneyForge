@@ -48,13 +48,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .status-heading { grid-column: 1 / 4; }
 .status-heading h2 { margin: .25rem 0 0; font-size: clamp(1.8rem, 2.6vw, 3.2rem); font-weight: 560; letter-spacing: -.045em; line-height: 1; }
 .eyebrow { margin: 0; color: var(--muted); font-size: .72rem; font-weight: 760; letter-spacing: .14em; text-transform: uppercase; }
-.status-grid { grid-column: 4 / 13; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.status-grid { grid-column: 4 / 13; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); }
 .status-card { min-height: 8.5rem; padding: .9rem; border-left: 1px solid #aab8b1; display: flex; flex-direction: column; justify-content: space-between; }
 .status-card strong { font-size: clamp(2rem, 3.5vw, 4rem); font-weight: 520; font-variant-numeric: tabular-nums; line-height: 1; }
 .status-card span { color: var(--muted); font-size: var(--small); }
 .status-card[data-status="online"] { background: var(--accent); }
 .status-card[data-status="online"] span { color: var(--ink); }
 .status-card[data-status="degraded"] { background: #f1c75b; }
+.status-card[data-status="stopped"] { background: #dce4df; }
 .status-card[data-status="revoked"] { color: var(--danger); }
 .status-grid[data-unavailable="true"] { opacity: .45; }
 
@@ -106,6 +107,29 @@ textarea { min-height: 5.5rem; resize: vertical; }
 .notice.error { color: var(--danger); }
 .archived-note { grid-column: 1 / -1; padding: 1rem; background: #dce4df; }
 
+.traps-shell { min-height: calc(100svh - 4.5rem); padding: clamp(2.5rem, 6vw, 6rem) var(--margin); }
+.traps-heading { padding-bottom: 2rem; border-bottom: 1px solid #aab8b1; }
+.traps-heading h1 { margin: .25rem 0 .5rem; font-size: clamp(3rem, 7vw, 7rem); font-weight: 540; letter-spacing: -.06em; line-height: .9; }
+.traps-heading > div > p:last-child { margin: 0; max-width: 46ch; color: var(--muted); }
+.trap-register { padding: 2rem 0; border-bottom: 1px solid #aab8b1; }
+.register-head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; }
+.register-head h2, .table-heading h2 { margin: 0; font-size: clamp(1.6rem, 2.6vw, 2.6rem); font-weight: 560; letter-spacing: -.04em; }
+.trap-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem 1.25rem; max-width: 58rem; }
+.trap-form .form-actions, .trap-form .notice { grid-column: 1 / -1; }
+.trap-table-wrap { padding-top: 2rem; }
+.table-heading { display: flex; align-items: end; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; }
+.table-scroll { overflow-x: auto; }
+.trap-table { width: 100%; border-collapse: collapse; }
+.trap-table th { padding: .6rem .7rem; border-bottom: 1px solid #aab8b1; color: var(--muted); font-size: .72rem; font-weight: 760; letter-spacing: .1em; text-transform: uppercase; text-align: left; }
+.trap-table td { padding: .9rem .7rem; border-bottom: 1px solid #bcc8c1; vertical-align: top; }
+.trap-status { display: inline-block; padding: .2rem .5rem; background: #dce4df; font-size: var(--small); font-weight: 700; }
+.trap-status[data-status="online"] { background: var(--accent); }
+.trap-status[data-status="degraded"] { background: #f1c75b; }
+.trap-status[data-status="stopped"] { background: #dce4df; color: var(--muted); }
+.trap-status[data-status="revoked"] { background: transparent; color: var(--danger); }
+.trap-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+.trap-actions .button { min-height: 2.2rem; padding: .35rem .65rem; font-size: var(--small); }
+
 .reveal { animation: arrive 420ms both; }
 .reveal:nth-child(2) { animation-delay: 60ms; }
 .reveal:nth-child(3) { animation-delay: 120ms; }
@@ -138,6 +162,7 @@ textarea { min-height: 5.5rem; resize: vertical; }
   .profile-row { scroll-snap-align: start; }
   .profile-editor { padding-top: 2.5rem; }
   .profile-form { grid-template-columns: 1fr; }
+  .trap-form { grid-template-columns: 1fr; }
   .service-row { grid-template-columns: 1fr 7rem; }
   .service-row .banner-field { grid-column: 1 / -1; }
   .service-row .settings-field { grid-column: 1 / -1; }

@@ -11,6 +11,7 @@
     <a class="brand" href="/">HoneyForge</a>
     <nav aria-label="Control Center">
       <a href="/events.html">Security Events</a>
+      <a href="/traps.html">Traps</a>
       <a href="/profiles.html">Trap Profiles</a>
       <span class="operator" id="operator">Checking Operator…</span>
       <button class="button quiet" id="logout" type="button">Log out</button>
@@ -30,6 +31,7 @@
         <article class="status-card" data-status="online"><strong id="status-online">0</strong><span>Online</span></article>
         <article class="status-card" data-status="degraded"><strong id="status-degraded">0</strong><span>Degraded</span></article>
         <article class="status-card" data-status="offline"><strong id="status-offline">0</strong><span>Offline</span></article>
+        <article class="status-card" data-status="stopped"><strong id="status-stopped">0</strong><span>Stopped</span></article>
         <article class="status-card" data-status="revoked"><strong id="status-revoked">0</strong><span>Revoked</span></article>
       </div>
     </section>
@@ -51,8 +53,11 @@
         return r.json();
       })
       .then(traps => {
-        const counts = { provisioning: 0, online: 0, degraded: 0, offline: 0, revoked: 0 };
-        traps.forEach(trap => { if (trap.status in counts) counts[trap.status] += 1; });
+        const counts = { provisioning: 0, online: 0, degraded: 0, offline: 0, stopped: 0, revoked: 0 };
+        traps.forEach(trap => {
+          const state = trap.display_status || trap.status;
+          if (state in counts) counts[state] += 1;
+        });
         Object.entries(counts).forEach(([status, count]) => {
           document.getElementById('status-' + status).textContent = count;
         });

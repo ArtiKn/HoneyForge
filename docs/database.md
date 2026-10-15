@@ -27,6 +27,7 @@ erDiagram
         text name
         uuid trap_profile_id FK
         bool is_archived
+        bool enabled
         inet ip_address
         text hostname
         text status
@@ -86,6 +87,10 @@ erDiagram
   `(received_at DESC, id DESC)`, а `observed_at` показывается отдельно и не влияет
   на порядок или retention.
 - Traps и ранее назначенные Trap Profiles архивируются, а Security Events, Attack Sessions и audit entries неизменяемы до retention cleanup.
+- `Trap.enabled` — желаемое состояние оператора; `Trap.status` — фактическое
+  состояние, которое подтверждает Agent через Health Report. `enabled = false`
+  показывает Trap как `stopped`: Agent останавливает сервисы, но продолжает
+  доставку буфера и Health Reports.
 - Security data хранится `SECURITY_DATA_RETENTION_DAYS` (30 дней по умолчанию),
   audit entries — `AUDIT_ENTRY_RETENTION_DAYS` (365 дней); фоновая очистка
   запускается каждые `RETENTION_SWEEP_INTERVAL_SECONDS` (сутки по умолчанию).

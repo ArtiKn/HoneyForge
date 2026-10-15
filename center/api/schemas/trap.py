@@ -21,10 +21,31 @@ class TrapRead(TrapCreate):
 
     id: UUID
     status: Literal["provisioning", "online", "degraded", "offline", "revoked"]
+    display_status: Literal[
+        "provisioning", "online", "degraded", "offline", "revoked", "stopped"
+    ]
+    enabled: bool
     is_archived: bool
     agent_version: str | None = None
     last_seen_at: datetime | None = None
     created_at: datetime
+
+
+class TrapUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    hostname: str | None = Field(default=None, max_length=255)
+    region: str | None = Field(default=None, max_length=128)
+    agent_meta: dict[str, Any] | None = None
+    trap_profile_id: UUID | None = None
+
+    @field_validator("name", "agent_meta")
+    @classmethod
+    def _reject_null(cls, value: Any) -> Any:
+        if value is None:
+            raise ValueError("must not be null")
+        return value
 
 
 class TrapProvisioned(TrapRead):
@@ -70,6 +91,7 @@ class AgentHealthReport(BaseModel):
     buffer_depth: int = Field(ge=0)
     configuration_errors: list[str] = Field(default_factory=list, max_length=20)
     buffer_loss: BufferLossReport | None = None
+    enabled: bool | None = None
 
 
 class RotationResponse(BaseModel):
@@ -80,5 +102,6 @@ class AgentConfiguration(BaseModel):
     trap_id: UUID
     profile_version: int
     interaction_level: Literal["low", "medium"]
+    enabled: bool
     services: list[TrapServiceDefinition]
 

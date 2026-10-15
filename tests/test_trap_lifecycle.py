@@ -200,7 +200,7 @@ async def test_profile_apply_failure_and_recovery_flow_through_agent_health(
 
     class Reporter:
         async def report_health(
-            self, _queue, *, agent_version, active_profile_version,
+            self, _queue, *, agent_version, active_profile_version, enabled,
             configuration_errors,
         ) -> None:
             response = await lifecycle_client.post(
@@ -209,6 +209,7 @@ async def test_profile_apply_failure_and_recovery_flow_through_agent_health(
                 json={
                     "agent_version": agent_version,
                     "active_profile_version": active_profile_version,
+                    "enabled": enabled,
                     "buffer_depth": 0,
                     "configuration_errors": configuration_errors,
                 },
@@ -756,6 +757,7 @@ async def test_enrolled_agent_reads_its_assigned_trap_profile(
         "trap_id": created["id"],
         "profile_version": 1,
         "interaction_level": "medium",
+        "enabled": True,
         "services": [
             {
                 "protocol": "ssh",
@@ -1436,3 +1438,222 @@ def _assert_events_visible_in_browser(events: list[dict]) -> None:
         thread.join(timeout=2)
     assert "Connection opened" in rendered.stdout
     assert "Connection closed" in rendered.stdout
+
+
+async def test_operator_reads_updates_starts_and_stops_a_trap(
+    lifecycle_app, lifecycle_client
+) -> None:
+    created = await precreate_trap(lifecycle_client)
+    trap_id = created["id"]
+
+    detail = await lifecycle_client.get(f"/api/v1/traps/{trap_id}")
+    assert detail.status_code == 200
+    assert detail.json()["enabled"] is True
+    assert detail.json()["display_status"] == "provisioning"
+
+    updated = await lifecycle_client.patch(
+        f"/api/v1/traps/{trap_id}",
+        headers={"Origin": "https://test"},
+        json={
+            "name": "edge-02",
+            "hostname": "edge-02.lab",
+            "region": "wan",
+            "agent_meta": {"rack": "r1"},
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "edge-02"
+    assert updated.json()["hostname"] == "edge-02.lab"
+    assert updated.json()["region"] == "wan"
+    assert updated.json()["agent_meta"] == {"rack": "r1"}
+
+    stopped = await lifecycle_client.post(
+        f"/api/v1/traps/{trap_id}/stop", headers={"Origin": "https://test"}
+    )
+    assert stopped.status_code == 200
+    assert stopped.json()["enabled"] is False
+    assert stopped.json()["display_status"] == "stopped"
+
+    repeat = await lifecycle_client.post(
+        f"/api/v1/traps/{trap_id}/stop", headers={"Origin": "https://test"}
+    )
+    assert repeat.status_code == 200
+    assert repeat.json()["enabled"] is False
+
+    started = await lifecycle_client.post(
+        f"/api/v1/traps/{trap_id}/start", headers={"Origin": "https://test"}
+    )
+    assert started.status_code == 200
+    assert started.json()["enabled"] is True
+    assert started.json()["display_status"] == "provisioning"
+
+    async with lifecycle_app.state.database.session_factory() as session:
+        trap = await session.get(Trap, trap_id)
+        actions = list(
+            await session.scalars(
+                select(AuditEntry.action)
+                .where(AuditEntry.entity_id == trap.id)
+                .order_by(AuditEntry.id)
+            )
+        )
+    assert actions == [
+        "trap.created",
+        "trap.updated",
+        "trap.stopped",
+        "trap.started",
+    ]
+
+
+async def test_operator_changes_the_trap_profile_with_an_audited_version(
+    lifecycle_app, lifecycle_client
+) -> None:
+    created = await precreate_trap(lifecycle_client)
+    replacement_profile_id = await create_profile(lifecycle_client, "Replacement profile")
+
+    changed = await lifecycle_client.patch(
+        f"/api/v1/traps/{created['id']}",
+        headers={"Origin": "https://test"},
+        json={"trap_profile_id": replacement_profile_id},
+    )
+    assert changed.status_code == 200
+    assert changed.json()["trap_profile_id"] == replacement_profile_id
+
+    rejected = await lifecycle_client.patch(
+        f"/api/v1/traps/{created['id']}",
+        headers={"Origin": "https://test"},
+        json={"trap_profile_id": str(uuid4())},
+    )
+    assert rejected.status_code == 422
+
+    async with lifecycle_app.state.database.session_factory() as session:
+        entry = await session.scalar(
+            select(AuditEntry).where(AuditEntry.action == "trap.profile_changed")
+        )
+    assert entry.details == {
+        "from": created["trap_profile_id"],
+        "to": replacement_profile_id,
+        "profile_version": 1,
+    }
+
+
+async def test_agent_configuration_and_health_track_the_desired_state(
+    lifecycle_app, lifecycle_client
+) -> None:
+    created = await precreate_trap(lifecycle_client)
+    secret = await enroll_trap(lifecycle_client, created)
+
+    initial = await lifecycle_client.get(
+        "/assets/v2/config", headers=authorization(secret)
+    )
+    assert initial.json()["enabled"] is True
+
+    await lifecycle_client.post(
+        f"/api/v1/traps/{created['id']}/stop", headers={"Origin": "https://test"}
+    )
+    stopped = await lifecycle_client.get(
+        "/assets/v2/config", headers=authorization(secret)
+    )
+    assert stopped.json()["enabled"] is False
+
+    confirmed = await lifecycle_client.post(
+        "/assets/v2/health",
+        headers=authorization(secret),
+        json=health_report() | {"enabled": False},
+    )
+    assert confirmed.status_code == 204
+    async with lifecycle_app.state.database.session_factory() as session:
+        trap = await session.get(Trap, created["id"])
+    assert trap.agent_meta["enabled_applied"] is False
+
+
+async def test_start_and_stop_are_rejected_for_revoked_traps(
+    lifecycle_app, lifecycle_client
+) -> None:
+    created = await precreate_trap(lifecycle_client)
+    await enroll_trap(lifecycle_client, created)
+    await lifecycle_client.post(
+        f"/api/v1/traps/{created['id']}/revoke", headers={"Origin": "https://test"}
+    )
+
+    for command in ("start", "stop"):
+        response = await lifecycle_client.post(
+            f"/api/v1/traps/{created['id']}/{command}",
+            headers={"Origin": "https://test"},
+        )
+        assert response.status_code == 409
+
+
+async def test_archiving_a_trap_stops_it_and_blocks_further_commands(
+    lifecycle_app, lifecycle_client
+) -> None:
+    created = await precreate_trap(lifecycle_client)
+
+    archived = await lifecycle_client.post(
+        f"/api/v1/traps/{created['id']}/archive", headers={"Origin": "https://test"}
+    )
+    assert archived.status_code == 200
+    assert archived.json()["is_archived"] is True
+    assert archived.json()["enabled"] is False
+
+    blocked = await lifecycle_client.post(
+        f"/api/v1/traps/{created['id']}/start", headers={"Origin": "https://test"}
+    )
+    assert blocked.status_code == 409
+
+    edit = await lifecycle_client.patch(
+        f"/api/v1/traps/{created['id']}",
+        headers={"Origin": "https://test"},
+        json={"name": "renamed"},
+    )
+    assert edit.status_code == 409
+
+
+async def test_delete_removes_an_unused_trap_and_archives_a_referenced_one(
+    lifecycle_app, lifecycle_client
+) -> None:
+    unused = await precreate_trap(
+        lifecycle_client, name="unused-01", profile_name="Unused profile"
+    )
+    removed = await lifecycle_client.delete(
+        f"/api/v1/traps/{unused['id']}", headers={"Origin": "https://test"}
+    )
+    assert removed.status_code == 204
+    assert (
+        await lifecycle_client.get(f"/api/v1/traps/{unused['id']}")
+    ).status_code == 404
+
+    referenced = await precreate_trap(
+        lifecycle_client, name="referenced-01", profile_name="Referenced profile"
+    )
+    secret = await enroll_trap(lifecycle_client, referenced)
+    await lifecycle_client.post(
+        "/assets/v2/init",
+        headers={**authorization(secret), "Content-Type": "application/javascript"},
+        json={
+            "events": [
+                {
+                    "id": str(uuid4()),
+                    "schema_version": 1,
+                    "trap_id": referenced["id"],
+                    "attack_session_id": str(uuid4()),
+                    "event_type": "connection_opened",
+                    "observed_at": "2026-10-14T12:00:00Z",
+                    "source_ip": "192.0.2.10",
+                    "source_port": 4444,
+                    "target_service": "ssh",
+                    "target_port": 22,
+                    "payload": {"banner": "SSH-2.0-OpenSSH_8.9p1"},
+                }
+            ]
+        },
+    )
+
+    retained = await lifecycle_client.delete(
+        f"/api/v1/traps/{referenced['id']}", headers={"Origin": "https://test"}
+    )
+    assert retained.status_code == 204
+    still_there = await lifecycle_client.get(f"/api/v1/traps/{referenced['id']}")
+    assert still_there.status_code == 200
+    assert still_there.json()["is_archived"] is True
+    assert still_there.json()["enabled"] is False
+

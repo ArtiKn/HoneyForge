@@ -33,6 +33,7 @@ async def configuration(
         trap_id=trap.id,
         profile_version=profile.version,
         interaction_level=profile.interaction_level,
+        enabled=trap.enabled,
         services=profile.services,
     )
 

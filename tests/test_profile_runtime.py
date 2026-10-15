@@ -356,3 +356,106 @@ def _free_port() -> int:
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         return int(listener.getsockname()[1])
+
+
+async def test_profile_runtime_starts_disabled_without_serving() -> None:
+    created: list[FakeService] = []
+
+    def build(_configuration: dict[str, Any]) -> list[FakeService]:
+        service = FakeService(f"service-{len(created)}")
+        created.append(service)
+        return [service]
+
+    runtime = ProfileRuntime(build)
+    await runtime.start({"profile_version": 1, "enabled": False})
+
+    assert runtime.active_profile_version == 1
+    assert runtime.enabled is False
+    assert created[0].accepting is False
+    assert created[0].committed is False
+    await runtime.stop()
+
+
+async def test_profile_runtime_disables_and_reenables_without_losing_version() -> None:
+    created: list[FakeService] = []
+
+    def build(configuration: dict[str, Any]) -> list[FakeService]:
+        services = [FakeService(name) for name in configuration["services"]]
+        created.extend(services)
+        return services
+
+    runtime = ProfileRuntime(build)
+    await runtime.start({"profile_version": 1, "services": ["ssh", "http"]})
+    assert runtime.enabled is True
+    assert all(service.accepting for service in created[:2])
+
+    assert await runtime.apply(
+        {"profile_version": 1, "services": ["ssh", "http"], "enabled": False}
+    ) is True
+    assert runtime.enabled is False
+    assert runtime.active_profile_version == 1
+    assert all(not service.accepting for service in created[:2])
+    await asyncio.sleep(0)
+    assert all(service.stopped for service in created[:2])
+    assert runtime.configuration_errors == []
+
+    assert await runtime.apply(
+        {"profile_version": 1, "services": ["ssh", "http"], "enabled": True}
+    ) is True
+    assert runtime.enabled is True
+    assert runtime.active_profile_version == 1
+    reenabled = created[2:]
+    assert reenabled and all(service.accepting for service in reenabled)
+
+    assert await runtime.apply(
+        {"profile_version": 1, "services": ["ssh", "http"], "enabled": True}
+    ) is False
+    await runtime.stop()
+
+
+async def test_profile_runtime_adopts_new_version_while_disabled() -> None:
+    created: list[FakeService] = []
+
+    def build(configuration: dict[str, Any]) -> list[FakeService]:
+        services = [
+            FakeService(f"{configuration['profile_version']}-{name}")
+            for name in configuration["services"]
+        ]
+        created.extend(services)
+        return services
+
+    runtime = ProfileRuntime(build)
+    await runtime.start({"profile_version": 1, "services": ["ssh"]})
+
+    assert await runtime.apply(
+        {"profile_version": 2, "services": ["http"], "enabled": False}
+    ) is True
+    assert runtime.active_profile_version == 2
+    assert runtime.enabled is False
+    await asyncio.sleep(0)
+    assert created[0].stopped is True
+
+    assert await runtime.apply(
+        {"profile_version": 2, "services": ["http"], "enabled": True}
+    ) is True
+    assert runtime.enabled is True
+    assert runtime.active_profile_version == 2
+    assert created[-1].accepting is True
+    await runtime.stop()
+
+
+async def test_profile_runtime_ignores_stale_version_but_applies_disable() -> None:
+    created: list[FakeService] = []
+
+    def build(configuration: dict[str, Any]) -> list[FakeService]:
+        service = FakeService(str(configuration["profile_version"]))
+        created.append(service)
+        return [service]
+
+    runtime = ProfileRuntime(build)
+    await runtime.start({"profile_version": 2})
+
+    assert await runtime.apply({"profile_version": 1, "enabled": False}) is False
+    assert runtime.enabled is True
+    await runtime.stop()
+

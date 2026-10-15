@@ -629,6 +629,7 @@ async def test_buffer_loss_is_cleared_only_after_health_acknowledgement(
             queue,
             agent_version="0.1.0",
             active_profile_version=3,
+            enabled=True,
             configuration_errors=[],
         )
     finally:
@@ -638,6 +639,7 @@ async def test_buffer_loss_is_cleared_only_after_health_acknowledgement(
 
     assert captured[0]["agent_version"] == "0.1.0"
     assert captured[0]["active_profile_version"] == 3
+    assert captured[0]["enabled"] is True
     assert captured[0]["buffer_depth"] == 1
     assert captured[0]["buffer_loss"]["dropped_events"] == 1
     assert captured[0]["buffer_loss"]["dropped_bytes"] == len(b'{"id":"dropped"}')

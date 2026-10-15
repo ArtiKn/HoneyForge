@@ -320,12 +320,14 @@ class AgentClient:
         *,
         agent_version: str,
         active_profile_version: int,
+        enabled: bool,
         configuration_errors: list[str],
     ) -> None:
         loss_report = queue.buffer_loss_report()
         payload: dict[str, Any] = {
             "agent_version": agent_version,
             "active_profile_version": active_profile_version,
+            "enabled": enabled,
             "buffer_depth": queue.pending_count(),
             "configuration_errors": configuration_errors,
         }

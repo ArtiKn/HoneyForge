@@ -8,7 +8,7 @@ WORKDIR /app
 
 RUN useradd --system --create-home --uid 10010 honeyforge-agent
 
-COPY agent/low/honeyforge_low.py agent/low/profile_runtime.py agent/low/main.py ./
+COPY agent/low/honeyforge_low.py agent/low/profile_runtime.py agent/low/process_masking.py agent/low/main.py ./
 COPY honeyforge_common ./honeyforge_common
 
 RUN install -d -o honeyforge-agent -g honeyforge-agent /var/lib/honeyforge \

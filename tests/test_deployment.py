@@ -124,7 +124,12 @@ def test_deployment_manifests_express_runtime_security_boundaries() -> None:
         exposed_address = service["networks"]["honeypot_exposed"]["ipv4_address"]
         assert service["environment"]["LISTEN_HOST"] == exposed_address
         assert service["environment"]["CENTER_CA_FILE"] == "/etc/honeyforge/center-ca.crt"
-        assert "PROCESS_NAME" not in service["environment"]
+        masked_name = service["environment"]["PROCESS_MASK_NAME"]
+        assert masked_name == "syslog-relay"
+        assert not any(
+            marker in masked_name.lower()
+            for marker in ("honey", "agent", "c2", "trap", "decoy")
+        )
         assert "extra_hosts" not in service
         writable_targets = {volume["target"] for volume in service["volumes"]}
         assert "/var/lib/honeyforge" in writable_targets

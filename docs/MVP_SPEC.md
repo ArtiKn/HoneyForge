@@ -2,7 +2,7 @@
 
 ## Purpose and boundary
 
-HoneyForge is a defensive honeypot platform for laboratory systems and infrastructure whose owner has authorized monitoring. It must provide both a reproducible single-machine demonstration and a distributed topology with the Control Center separated from Traps in a DMZ. High-interaction execution, third-party CDN routing, process masquerading, and use outside authorized infrastructure are out of scope.
+HoneyForge is a defensive honeypot platform for laboratory systems and infrastructure whose owner has authorized monitoring. It must provide both a reproducible single-machine demonstration and a distributed topology with the Control Center separated from Traps in a DMZ. High-interaction execution, third-party CDN routing, and use outside authorized infrastructure are out of scope.
 
 The attached work plan is the source of scope: items marked Must define the MVP unless this specification explicitly resolves a contradiction. Bonus work starts only after the MVP acceptance gate passes.
 
@@ -65,7 +65,7 @@ The UI remains vanilla HTML, CSS, and JavaScript with four views: login, dashboa
 
 The demo uses a generated local CA trusted by Agents. Distributed installations use operator-provided certificates or a public CA. Nginx trusts forwarded client addresses only from configured internal proxies and enforces request-size and connection-rate limits. Emulators also limit concurrent clients, input sizes, and idle time.
 
-The Agent runs unprivileged as `honeyforge-agent`. Containers use read-only filesystems where feasible, dropped capabilities, resource limits, dedicated writable volumes, and separated management networks. Services emit structured JSON logs without credentials, Trap Secrets, enrollment tokens, or JWTs. `/health` reports process liveness and `/ready` verifies mandatory dependencies; metrics are Bonus.
+The Agent runs unprivileged as `honeyforge-agent` and masks its process title, thread name and command line behind a neutral daemon name (MASK-4) so it is not recognizable on its host. Containers use read-only filesystems where feasible, dropped capabilities, resource limits, dedicated writable volumes, and separated management networks. Services emit structured JSON logs without credentials, Trap Secrets, enrollment tokens, or JWTs. `/health` reports process liveness and `/ready` verifies mandatory dependencies; metrics are Bonus.
 
 ## Deployment and demo
 

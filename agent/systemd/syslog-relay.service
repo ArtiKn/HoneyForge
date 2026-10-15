@@ -1,0 +1,29 @@
+# Neutral system service unit. The literal `syslog-relay` values are the
+# defaults; install.sh substitutes placeholder tokens for a non-default
+# service name, user or install location before writing this unit to
+# /etc/systemd/system.
+[Unit]
+Description=System log relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@@SERVICE_USER@@
+Group=@@SERVICE_GROUP@@
+EnvironmentFile=-@@CONFIG_DIR@@/relay.env
+WorkingDirectory=@@INSTALL_DIR@@
+ExecStart=@@EXEC_START@@
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=@@STATE_DIR@@
+
+[Install]
+WantedBy=multi-user.target

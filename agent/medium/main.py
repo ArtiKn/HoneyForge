@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 import asyncssh
 
 from agent.low.honeyforge_low import AgentClient, EventQueue, JsonLogFormatter
+from agent.low.process_masking import apply_process_masking, resolve_process_name
 from agent.low.profile_runtime import (
     ProfileRuntime,
     TrapService,
@@ -23,7 +24,7 @@ from agent.low.profile_runtime import (
 )
 from agent.medium.http_service import HttpAttackSessionRegistry, MediumHttpService
 
-log = logging.getLogger("honeyforge-agent")
+log = logging.getLogger(resolve_process_name())
 
 
 @dataclass
@@ -376,6 +377,7 @@ class MediumSshService:
 
 
 async def run() -> None:
+    log.info("started as %s", apply_process_masking())
     secret_file = Path(os.environ["TRAP_SECRET_FILE"])
     ca_file = os.getenv("CENTER_CA_FILE")
     client = AgentClient(

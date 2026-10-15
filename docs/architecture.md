@@ -55,7 +55,7 @@ Collector нормализует батч, дополняет geoip, пишет 
 |---|---|
 | Endpoint телеметрии | URI `/assets/v2/init`, `Content-Type: application/javascript` |
 | User-Agent агента | Под Chrome/Firefox (см. `channel.py`) |
-| Процесс Agent | Не маскируется: непривилегированный пользователь и logger называются `honeyforge-agent` |
+| Процесс Agent | Маскируется: `prctl(PR_SET_NAME)` + перезапись argv дают нейтральное имя (`syslog-relay`, настраивается через `PROCESS_MASK_NAME`) |
 | Тайминги beacon'а | jitter ±30% от интервала |
 | Баннеры сервисов | Реалистичные строки (OpenSSH_8.9, nginx/1.24.0, MySQL 8.0) |
 | Ответы fake-shell | Задержки как у настоящего bash |

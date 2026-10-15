@@ -61,6 +61,39 @@ distributed-схеме `honeypot_exposed` — internal network без внешн
 каждый Agent слушает только свой статический адрес этой сети (`172.31.0.11` или
 `172.31.0.12`), поэтому management-интерфейс не публикует trap-порты.
 
+## Скрытность агента на хосте (MASK-4)
+
+При старте агент переименовывает заголовок процесса, имя потока и командную
+строку, поэтому в `ps` и в `/proc/<pid>/cmdline` он не читается как honeypot
+агент. Псевдоним задаётся `PROCESS_MASK_NAME` (по умолчанию `syslog-relay`).
+Значение с маркером `honey/agent/trap/decoy/c2` игнорируется в пользу дефолта,
+поэтому маскировку нельзя случайно отключить неверной конфигурацией.
+
+Канонический `setproctitle` используется, если он установлен (необязательный
+extra `agent`: `pip install 'honeyforge[agent]'`); в противном случае работает
+чисто-Python fallback (`prctl(PR_SET_NAME)` + перезапись argv), поэтому жёсткой
+системной зависимости нет.
+
+Для развёртывания вне Docker:
+
+```bash
+sudo LEVEL=low ./agent/install.sh   # LEVEL=low|medium
+sudo systemctl start syslog-relay
+```
+
+Скрипт кладёт код в нейтральный каталог `/usr/lib/syslog-relay`, конфиг в
+`/etc/syslog-relay/relay.env`, буфер в `/var/lib/syslog-relay`, создаёт
+одноимённую системную учётную запись и юнит `syslog-relay.service` с
+hardened-настройками (`ProtectSystem=strict`, `NoNewPrivileges`,
+`ReadWritePaths` только на state-dir). Файл точек входа копируется под
+нейтральным именем `relay.py`. `SERVICE_NAME`, `LEVEL`, `PYTHON` и пути
+переопределяются переменными окружения; `SERVICE_NAME` с маркером скрипт
+отклоняет.
+
+Маскируется то, что видно в списке процессов: заголовок, поток, cmdline и имя
+сервиса. Имена кодовых пакетов (`honeyforge_common`, `agent`) — идентификаторы
+исходников, они не выводятся в `ps`.
+
 ## Запуск
 
 ### Полный локальный demo

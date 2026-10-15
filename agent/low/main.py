@@ -19,17 +19,19 @@ from honeyforge_low import (
     LowMySqlAgent,
     LowSshAgent,
 )
+from process_masking import apply_process_masking, resolve_process_name
 from profile_runtime import ProfileRuntime, TrapService, report_runtime_health
 
 log_handler = logging.StreamHandler()
 log_handler.setFormatter(JsonLogFormatter())
 logging.basicConfig(level=logging.INFO, handlers=[log_handler])
-log = logging.getLogger("honeyforge-agent")
+log = logging.getLogger(resolve_process_name())
 
 
 async def run() -> None:
     """Apply the assigned Low SSH profile and continuously deliver events."""
 
+    log.info("started as %s", apply_process_masking())
     secret_file = Path(os.environ["TRAP_SECRET_FILE"])
     trap_secret = secret_file.read_text(encoding="utf-8").strip()
     ca_file = os.getenv("CENTER_CA_FILE")

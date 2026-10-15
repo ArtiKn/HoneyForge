@@ -6,6 +6,7 @@ import pytest
 
 from agent.low.honeyforge_low import EventQueue
 from agent.medium.http_service import HttpAttackSessionRegistry, MediumHttpService
+from center.api.schemas.security_event import SecurityEventSchema
 
 pytestmark = pytest.mark.asyncio
 
@@ -261,7 +262,10 @@ async def test_medium_http_applies_logging_settings(tmp_path: Path) -> None:
         for event in queue.pending(limit=20)
         if event["event_type"] == "authentication_attempt"
     )
-    assert attempt["payload"] == {"accepted": True}
+    assert attempt["payload"] == {
+        "username": "<redacted>", "password": "<redacted>", "accepted": True,
+    }
+    SecurityEventSchema.model_validate(attempt)
 
 
 async def test_medium_http_applies_response_delay(tmp_path: Path) -> None:

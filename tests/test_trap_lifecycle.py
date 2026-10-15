@@ -1027,13 +1027,13 @@ async def test_black_box_low_ssh_interaction_reaches_operator_api(
         await asyncio.wait_for(ssh.communicate(), timeout=5)
         assert ssh.returncode != 0
         for _ in range(100):
-            if queue.pending_count() == 2:
+            if queue.pending_count() == 3:
                 break
             await asyncio.sleep(0.01)
 
         with pytest.raises(URLError):
             await client.deliver_pending(queue)
-        assert queue.pending_count() == 2
+        assert queue.pending_count() == 3
 
         server_task = asyncio.create_task(server.serve())
         for _ in range(100):
@@ -1057,8 +1057,8 @@ async def test_black_box_low_ssh_interaction_reaches_operator_api(
                 json={"events": replayed_events},
             )
         assert stored_without_local_ack.status_code == 200
-        assert queue.pending_count() == 2
-        assert await client.deliver_pending(queue) == 2
+        assert queue.pending_count() == 3
+        assert await client.deliver_pending(queue) == 3
         assert queue.pending_count() == 0
     finally:
         await agent.stop()
@@ -1079,6 +1079,7 @@ async def test_black_box_low_ssh_interaction_reaches_operator_api(
     assert {event["event_type"] for event in visible_events} == {
         "connection_opened",
         "connection_closed",
+        "payload_received",
     }
     assert len({event["attack_session_id"] for event in visible_events}) == 1
     async with lifecycle_app.state.database.session_factory() as session:
@@ -1087,7 +1088,7 @@ async def test_black_box_low_ssh_interaction_reaches_operator_api(
             .select_from(SecurityEvent)
             .where(SecurityEvent.trap_id == created["id"])
         )
-    assert event_count == 102
+    assert event_count == 103
     _assert_events_visible_in_browser(response.json()["items"])
 
 
@@ -1372,12 +1373,12 @@ async def test_black_box_medium_fake_http_reaches_operator_api(
             assert malicious.status_code == 302
             assert not marker.exists()
         for _ in range(100):
-            if queue.pending_count() == 14:
+            if queue.pending_count() == 16:
                 break
             await asyncio.sleep(0.01)
-        assert queue.pending_count() == 14
+        assert queue.pending_count() == 16
         client = AgentClient(f"https://127.0.0.1:{api_port}", secret, ca_file=certificate)
-        assert await client.deliver_pending(queue) == 14
+        assert await client.deliver_pending(queue) == 16
     finally:
         await service.stop()
         queue.close()
@@ -1801,3 +1802,92 @@ async def test_revoked_trap_is_restored_and_reenrolled(
     assert trap.is_archived is False
     assert trap.current_secret_hash is not None
 
+
+
+async def test_http_logging_flags_and_limits_do_not_lose_events_in_control_center(
+    lifecycle_client, tmp_path,
+):
+    from urllib.parse import urlencode
+    created = await precreate_trap(lifecycle_client)
+    secret = await enroll_trap(lifecycle_client, created)
+    queue = EventQueue(tmp_path / "logging-contract.sqlite3")
+    for capture, limit in [(True, 7), (True, 0), (False, 4096)]:
+        service = MediumHttpService(
+            trap_id=created["id"], host="127.0.0.1", port=8080, queue=queue,
+            capture_http_bodies=False, capture_credentials=capture, max_payload_bytes=limit,
+        )
+        service._route("POST", "/login", {},
+            urlencode({"username": "оператор", "password": "🔑" * 2000}).encode(),
+            str(uuid4()), "192.0.2.1", 12345)
+    events = queue.pending(limit=10)
+    result = await lifecycle_client.post("/assets/v2/init", headers=authorization(secret), json={"events": events})
+    assert result.status_code == 200
+    assert set(result.json()["accepted"]) == {event["id"] for event in events}
+    persisted = await lifecycle_client.get("/api/v1/security-events", params={"trap_id": created["id"]})
+    assert {event["id"] for event in persisted.json()["items"]} == {event["id"] for event in events}
+    for event in persisted.json()["items"]:
+        expected = next(original for original in events if original["id"] == event["id"])
+        assert event["payload"] == expected["payload"]
+    queue.close()
+
+
+async def test_v2_services_reach_center_and_replay_without_duplicates(lifecycle_client, tmp_path):
+    from agent.low.honeyforge_low import LowUdpAgent
+    from agent.medium.mysql_service import MediumMySqlService
+    from tests.support import mysql_login, mysql_query, write_packet
+    from base64 import b64decode
+    for protocol, level, service_type in [('udp', 'low', LowUdpAgent), ('mysql', 'medium', MediumMySqlService)]:
+        profile = await lifecycle_client.post('/api/v1/trap-profiles', headers={'Origin': 'https://test'}, json={
+            'name': f'v2-{protocol}', 'interaction_level': level,
+            'services': [{'protocol': protocol, 'internal_port': 9999 if protocol == 'udp' else 3306}],
+        })
+        assert profile.status_code == 201
+        created = (await lifecycle_client.post('/api/v1/traps', headers={'Origin': 'https://test'}, json={
+            'name': f'v2-{protocol}', 'trap_profile_id': profile.json()['id'],
+        })).json()
+        secret = await enroll_trap(lifecycle_client, created)
+        queue = EventQueue(tmp_path / f'{protocol}.sqlite3')
+        service = service_type(trap_id=created['id'], host='127.0.0.1', port=0, queue=queue)
+        await service.start()
+        try:
+            if protocol == 'udp':
+                completed = asyncio.get_running_loop().create_future()
+                class Client(asyncio.DatagramProtocol):
+                    def datagram_received(self, data, addr):
+                        if not completed.done():
+                            completed.set_result(data)
+                transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(Client, remote_addr=('127.0.0.1', service.port))
+                try:
+                    transport.sendto(b'\x00\xffscan-payload')
+                    await asyncio.wait_for(completed, 2)
+                finally:
+                    transport.close()
+            else:
+                reader, writer, result = await mysql_login(service.port)
+                assert result[0] == 0
+                assert await mysql_query(reader, writer, 'SELECT 1') == [b'\x011']
+                await write_packet(writer, b'\x01')
+                await reader.read()
+                writer.close()
+                await writer.wait_closed()
+            await service.wait_drained()
+        finally:
+            await service.stop()
+        events = queue.pending(limit=50)
+        for _ in range(2):
+            response = await lifecycle_client.post('/assets/v2/init', headers=authorization(secret), json={'events': events})
+            assert response.status_code == 200, response.text
+            assert set(response.json()['accepted']) == {e['id'] for e in events}
+        listed = await lifecycle_client.get('/api/v1/security-events', params={'trap_id': created['id']})
+        assert len(listed.json()['items']) == len(events)
+        kind = 'payload_received' if protocol == 'udp' else 'database_query'
+        filtered = await lifecycle_client.get('/api/v1/security-events', params={
+            'trap_id': created['id'], 'event_type': kind, 'source_ip': '127.0.0.1',
+        })
+        items = filtered.json()['items']
+        assert len(items) == 1 and items[0]['schema_version'] == 2
+        if protocol == 'udp':
+            assert b64decode(items[0]['payload']['data']) == b'\x00\xffscan-payload'
+        else:
+            assert items[0]['payload']['query'] == 'SELECT 1'
+        queue.close()

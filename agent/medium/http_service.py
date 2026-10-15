@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from honeyforge_common.telemetry import captured_binary
+
 import asyncio
 from datetime import UTC, datetime, timedelta
 from html import escape
@@ -12,6 +14,7 @@ from urllib.parse import parse_qs
 from uuid import UUID, uuid4
 
 from agent.low.honeyforge_low import EventQueue
+from honeyforge_common.telemetry import captured_text
 
 
 class HttpAttackSessionRegistry:
@@ -199,6 +202,12 @@ class MediumHttpService:
                     "bytes_received": bytes_received,
                 },
             )
+            if body:
+                self._enqueue(attack_session_id, "payload_received", source_ip, source_port, {
+                    "kind": "http_body",
+                    **captured_binary(body, max_bytes=self.max_payload_bytes,
+                                      enabled=self.capture_http_bodies and self.capture_credentials),
+                })
             status, response_headers, content = self._route(
                 method, target, headers, body, attack_session_id, source_ip, source_port
             )
@@ -246,6 +255,8 @@ class MediumHttpService:
             name, separator, value = line.partition(b":")
             if separator:
                 headers[name.decode("latin-1").lower()] = value.decode("latin-1").strip()
+        if "transfer-encoding" in headers:
+            return None
         content_length = int(headers.get("content-length", "0"))
         if content_length < 0 or len(header_block) + content_length > self.max_input_bytes:
             return None
@@ -271,15 +282,22 @@ class MediumHttpService:
             return "200 OK", {}, self._login_page()
         if method == "POST" and path == "/login":
             fields = parse_qs(body.decode("utf-8", errors="replace"), keep_blank_values=True)
-            username = fields.get("username", [""])[0][:256]
-            password = fields.get("password", [""])[0][:1024]
+            username = fields.get("username", [""])[0]
+            password = fields.get("password", [""])[0]
             accepted = self._login_accepted(username, password)
-            payload: dict[str, Any] = {"accepted": accepted}
-            if self.capture_http_bodies:
-                payload["username"] = username or "unknown"
-                payload["password"] = (
-                    password if self.capture_credentials else "<redacted>"
-                )
+            # Credential capture is independent from raw HTTP body capture.
+            # Keep mandatory wire fields even when recording is disabled.
+            payload: dict[str, Any] = {
+                "accepted": accepted,
+                "username": captured_text(
+                    username, enabled=self.capture_credentials,
+                    max_bytes=self.max_payload_bytes, max_chars=256, required=True,
+                ),
+                "password": captured_text(
+                    password, enabled=self.capture_credentials,
+                    max_bytes=self.max_payload_bytes, max_chars=1024,
+                ),
+            }
             self._enqueue(
                 attack_session_id,
                 "authentication_attempt",
@@ -395,7 +413,7 @@ class MediumHttpService:
         self.queue.enqueue(
             {
                 "id": str(uuid4()),
-                "schema_version": 1,
+                "schema_version": 2 if event_type == "payload_received" else 1,
                 "trap_id": str(self.trap_id),
                 "attack_session_id": attack_session_id,
                 "event_type": event_type,

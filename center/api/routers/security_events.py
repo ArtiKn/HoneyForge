@@ -33,6 +33,8 @@ async def list_security_events(
         "command_entered",
         "http_request",
         "connection_closed",
+        "payload_received",
+        "database_query",
     ]
     | None = None,
     source_ip: str | None = None,

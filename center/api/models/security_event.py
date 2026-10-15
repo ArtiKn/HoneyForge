@@ -22,7 +22,7 @@ class SecurityEvent(Base):
         Index("idx_security_events_type", "event_type"),
         CheckConstraint(
             "event_type IN ('connection_opened', 'authentication_attempt', "
-            "'command_entered', 'http_request', 'connection_closed')",
+            "'command_entered', 'http_request', 'connection_closed', 'payload_received', 'database_query')",
             name="event_type",
         ),
     )

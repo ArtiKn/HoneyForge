@@ -642,3 +642,42 @@ document.querySelector('.profile-row').click();
     assert captured[0]["payload"]["logging"]["capture_credentials"] is False
     assert captured[0]["payload"]["logging"]["max_payload_bytes"] == 2048
     assert captured[0]["payload"]["masking"] == {"beacon_interval_seconds": 120}
+
+
+@pytest.mark.parametrize("services,level", [
+    ([{"protocol": "udp", "internal_port": 9999}], "medium"),
+    ([{"protocol": "ssh", "internal_port": 22}, {"protocol": "http", "internal_port": 22}], "low"),
+    ([{"protocol": "http", "internal_port": 80, "banner": "\r\n"}], "low"),
+])
+async def test_invalid_service_combinations_never_change_saved_profiles(
+    profile_client, services, level,
+):
+    headers = {"Origin": "https://test", "If-Match": '"1"'}
+    invalid = {"name": "Unsupported", "interaction_level": level, "services": services}
+    created = await profile_client.post("/api/v1/trap-profiles", headers=headers, json=invalid)
+    assert created.status_code == 422
+    valid = await create_profile(profile_client, "Keep working profile")
+    path = f"/api/v1/trap-profiles/{valid['id']}"
+    updated = await profile_client.put(path, headers=headers, json=invalid)
+    assert updated.status_code == 422
+    current = await profile_client.get(path)
+    assert current.json() == valid
+
+
+async def test_legacy_unsupported_profile_remains_readable_and_repairable(profile_app, profile_client):
+    from center.api.models import TrapProfile
+    created = await create_profile(profile_client, "Legacy Medium")
+    async with profile_app.state.database.session_factory() as session:
+        profile = await session.get(TrapProfile, created["id"])
+        profile.interaction_level = "medium"
+        profile.services = [{"protocol": "mysql", "internal_port": 3306}]
+        await session.commit()
+    path = f"/api/v1/trap-profiles/{created['id']}"
+    assert (await profile_client.get(path)).status_code == 200
+    assert (await profile_client.get("/api/v1/trap-profiles")).status_code == 200
+    repaired = await profile_client.put(path,
+        headers={"Origin": "https://test", "If-Match": '"1"'},
+        json={"name": "Repaired", "interaction_level": "medium",
+              "services": [{"protocol": "ssh", "internal_port": 22}]})
+    assert repaired.status_code == 200
+    assert repaired.json()["version"] == 2

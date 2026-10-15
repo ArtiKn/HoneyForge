@@ -13,6 +13,8 @@ const labels = {
   authentication_attempt: 'Попытка аутентификации',
   command_entered: 'Введена команда',
   http_request: 'HTTP-запрос',
+  payload_received: 'Получен payload',
+  database_query: 'Запрос к БД',
 };
 
 function renderEvent(event) {
@@ -45,7 +47,7 @@ function renderEvent(event) {
   const detail = document.createElement('code');
   detail.tabIndex = 0;
   detail.setAttribute('aria-label', 'Данные события');
-  detail.textContent = event.payload.banner || JSON.stringify(event.payload);
+  detail.textContent = JSON.stringify(event.payload);
 
   const identifiers = document.createElement('div');
   identifiers.className = 'event-identifiers';

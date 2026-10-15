@@ -20,6 +20,19 @@ form.addEventListener('click', event => {
   if (event.target.closest('#add-service, #add-credential, .remove-service, .remove-credential')) dirty = true;
 });
 
+function validateServiceProtocols() {
+  const medium = form.elements.interaction_level.value === 'medium';
+  services.querySelectorAll('[name="protocol"]').forEach(select => {
+    select.querySelectorAll('option').forEach(option => {
+      option.disabled = medium && option.value === 'udp';
+    });
+    select.setCustomValidity(medium && select.value === 'udp'
+      ? 'Для уровня Medium выберите SSH, HTTP или MySQL. UDP доступен только для Low.'
+      : '');
+  });
+}
+form.elements.interaction_level.addEventListener('change', validateServiceProtocols);
+
 function addService(value = {}) {
   const row = template.content.firstElementChild.cloneNode(true);
   row.querySelector('[name="protocol"]').value = value.protocol || 'ssh';
@@ -29,7 +42,9 @@ function addService(value = {}) {
   row.querySelector('.remove-service').addEventListener('click', () => {
     if (services.children.length > 1) row.remove();
   });
+  row.querySelector('[name="protocol"]').addEventListener('change', validateServiceProtocols);
   services.append(row);
+  validateServiceProtocols();
 }
 
 function addCredential(value = {}) {
@@ -107,7 +122,10 @@ async function request(url, options = {}) {
     if (body.detail === 'Trap Profile changed; reload it before editing') {
       throw new Error('Профиль ловушки изменён в другом окне. Загружена последняя версия.');
     }
-    throw new Error(body.detail || 'Не удалось выполнить действие в центре управления.');
+    const detail = Array.isArray(body.detail)
+      ? body.detail.map(issue => issue.msg.replace(/^Value error, /, '')).join(' · ')
+      : body.detail;
+    throw new Error(detail || 'Не удалось выполнить действие в центре управления.');
   }
   return response;
 }

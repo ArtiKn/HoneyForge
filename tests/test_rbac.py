@@ -153,8 +153,8 @@ def test_ui_views_delegate_role_gating_to_the_shared_helper() -> None:
     assert "from './operator.js'" in profiles
     assert "canManage" in traps
     assert "canManage" in profiles
-    assert "View only" in traps
-    assert "Read-only Operator" in profiles
+    assert "Только просмотр" in traps
+    assert "Доступ только для просмотра" in profiles
 
 
 def test_viewer_ui_hides_mutation_controls() -> None:

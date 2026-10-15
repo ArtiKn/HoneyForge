@@ -13,6 +13,8 @@ from collections.abc import AsyncIterator
 import httpx
 import pytest
 from fastapi import FastAPI
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from center.api.config import Settings
 from center.api.main import create_app
@@ -85,6 +87,14 @@ async def migrated_database_url(test_database_url: str) -> AsyncIterator[str]:
     try:
         yield test_database_url
     finally:
+        # Teardown discards this test's observations before checking the downgrade.
+        # Production downgrade intentionally refuses to invalidate v2 history.
+        engine = create_async_engine(test_database_url)
+        try:
+            async with engine.begin() as connection:
+                await connection.execute(text("TRUNCATE security_events"))
+        finally:
+            await engine.dispose()
         run_migrations(test_database_url, "downgrade", "base")
 
 

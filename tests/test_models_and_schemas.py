@@ -82,7 +82,7 @@ def test_security_event_contract_uses_canonical_identifiers_and_fields() -> None
 @pytest.mark.parametrize(
     ("schema_version", "observed_at", "payload"),
     [
-        (2, "2026-10-12T12:00:00Z", {"banner": "SSH-2.0-test"}),
+        (3, "2026-10-12T12:00:00Z", {"banner": "SSH-2.0-test"}),
         (1, "2026-10-12T12:00:00", {"banner": "SSH-2.0-test"}),
         (1, "2026-10-12T12:00:00Z", {}),
     ],

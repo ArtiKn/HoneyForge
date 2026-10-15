@@ -62,6 +62,7 @@ services:
       - "${LOW_SSH_PORT:-2222}:${LOW_SSH_INTERNAL_PORT:-22}"
       - "${LOW_HTTP_PORT:-8080}:${LOW_HTTP_INTERNAL_PORT:-80}"
       - "${LOW_MYSQL_PORT:-33060}:${LOW_MYSQL_INTERNAL_PORT:-3306}"
+      - "${LOW_UDP_PORT:-9999}:${LOW_UDP_INTERNAL_PORT:-9999}/udp"
     deploy:
       resources:
         limits:
@@ -103,6 +104,7 @@ services:
     ports:
       - "${MEDIUM_SSH_PORT:-2223}:${MEDIUM_SSH_INTERNAL_PORT:-22}"
       - "${MEDIUM_HTTP_PORT:-8081}:${MEDIUM_HTTP_INTERNAL_PORT:-80}"
+      - "${MEDIUM_MYSQL_PORT:-33061}:${MEDIUM_MYSQL_INTERNAL_PORT:-3306}"
     deploy:
       resources:
         limits:

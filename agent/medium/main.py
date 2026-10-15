@@ -16,12 +16,15 @@ from uuid import UUID, uuid4
 import asyncssh
 
 from agent.low.honeyforge_low import AgentClient, EventQueue, JsonLogFormatter
+from honeyforge_common.telemetry import captured_text
 from agent.low.process_masking import apply_process_masking, resolve_process_name
 from agent.low.profile_runtime import (
     ProfileRuntime,
     TrapService,
     report_runtime_health,
 )
+from agent.medium.fake_fs import FakeShell
+from agent.medium.mysql_service import MediumMySqlService
 from agent.medium.http_service import HttpAttackSessionRegistry, MediumHttpService
 
 log = logging.getLogger(resolve_process_name())
@@ -69,6 +72,7 @@ class _FakeShellSession(asyncssh.SSHServerSession[str]):
         self.attack = attack
         self.channel: asyncssh.SSHServerChannel[str] | None = None
         self.input_buffer = ""
+        self.shell = FakeShell(attack.username)
         self.idle_timer: asyncio.TimerHandle | None = None
         self._pending_writes: set[asyncio.Task[None]] = set()
 
@@ -94,11 +98,13 @@ class _FakeShellSession(asyncssh.SSHServerSession[str]):
             self.service.enqueue(
                 self.attack,
                 "command_entered",
-                {"command": self.service.recorded_command(command)},
+                {
+                    "command": self.service.recorded_command(command),
+                    "cwd": captured_text(self.shell.cwd, enabled=self.service.capture_commands,
+                                         max_bytes=self.service.max_payload_bytes, max_chars=1024),
+                },
             )
-            response, should_close = self.service.command_response(
-                command, self.attack.username
-            )
+            response, should_close = self.shell.execute(command)
             self._respond(response, should_close)
             if should_close:
                 return
@@ -196,7 +202,7 @@ class _FakeSshServer(asyncssh.SSHServer):
             self.attack,
             "authentication_attempt",
             {
-                "username": username[:256] or "unknown",
+                "username": self.service.recorded_username(username),
                 "password": self.service.recorded_password(password),
                 "accepted": accepted,
             },
@@ -335,18 +341,7 @@ class MediumSshService:
 
     @staticmethod
     def command_response(command: str, username: str) -> tuple[str, bool]:
-        responses = {
-            "pwd": f"/home/{username}\r\n$ ",
-            "whoami": f"{username}\r\n$ ",
-            "ls": "README.txt\r\n$ ",
-            "cat /etc/passwd": "root:x:0:0:root:/root:/bin/bash\r\n$ ",
-            "uname -a": "Linux honeyforge 5.15.0-generic x86_64 GNU/Linux\r\n$ ",
-            "exit": "logout\r\n",
-            "logout": "logout\r\n",
-        }
-        if command in ("exit", "logout"):
-            return responses[command], True
-        return responses.get(command, "command not found\r\n$ "), False
+        return FakeShell(username).execute(command)
 
     def password_accepted(self, username: str, password: str, attempt: int) -> bool:
         """Honor configured decoy credentials, else the legacy attempt budget."""
@@ -364,20 +359,23 @@ class MediumSshService:
             )
         return attempt <= self.max_attempts
 
+    def recorded_username(self, username: str) -> str:
+        return captured_text(
+            username, enabled=self.capture_credentials,
+            max_bytes=self.max_payload_bytes, max_chars=256, required=True,
+        )
+
     def recorded_password(self, password: str) -> str:
-        if not self.capture_credentials:
-            return "<redacted>"
-        return self._truncate(password)
+        return captured_text(
+            password, enabled=self.capture_credentials,
+            max_bytes=self.max_payload_bytes, max_chars=1024,
+        )
 
     def recorded_command(self, command: str) -> str:
-        if not self.capture_commands:
-            return "<redacted>"
-        return self._truncate(command)
-
-    def _truncate(self, value: str) -> str:
-        if self.max_payload_bytes and len(value) > self.max_payload_bytes:
-            return value[: self.max_payload_bytes]
-        return value
+        return captured_text(
+            command, enabled=self.capture_commands,
+            max_bytes=self.max_payload_bytes, max_chars=4096,
+        )
 
     def enqueue(
         self,
@@ -388,7 +386,7 @@ class MediumSshService:
         self.queue.enqueue(
             {
                 "id": str(uuid4()),
-                "schema_version": 1,
+                "schema_version": 2 if event_type == "command_entered" and "cwd" in payload else 1,
                 "trap_id": str(self.trap_id),
                 "attack_session_id": attack.attack_session_id,
                 "event_type": event_type,
@@ -437,7 +435,7 @@ async def run() -> None:
         max_payload_bytes = int(logging_settings.get("max_payload_bytes", 4096))
         result: list[TrapService] = []
         for definition in config["services"]:
-            if definition["protocol"] not in ("ssh", "http"):
+            if definition["protocol"] not in ("ssh", "http", "mysql"):
                 raise RuntimeError(
                     f"Unsupported Medium service protocol: {definition['protocol']}"
                 )
@@ -459,6 +457,12 @@ async def run() -> None:
                     capture_credentials=capture_credentials,
                     capture_commands=capture_commands,
                     max_payload_bytes=max_payload_bytes,
+                )
+            elif definition["protocol"] == "mysql":
+                service = MediumMySqlService(
+                    **common, banner=definition.get("banner"),
+                    decoy_credentials=decoy_credentials, capture_credentials=capture_credentials,
+                    capture_commands=capture_commands, max_payload_bytes=max_payload_bytes,
                 )
             else:
                 service = MediumHttpService(

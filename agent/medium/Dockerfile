@@ -13,7 +13,7 @@ RUN useradd --system --create-home --uid 10011 honeyforge-agent
 RUN pip install --no-cache-dir "asyncssh>=2.20,<3"
 
 COPY agent/medium/main.py ./
-COPY agent/medium/http_service.py ./agent/medium/
+COPY agent/medium/http_service.py agent/medium/fake_fs.py agent/medium/mysql_service.py ./agent/medium/
 COPY agent/low/honeyforge_low.py agent/low/profile_runtime.py agent/low/process_masking.py agent/low/__init__.py ./agent/low/
 COPY honeyforge_common ./honeyforge_common
 

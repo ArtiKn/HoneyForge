@@ -18,6 +18,7 @@ from honeyforge_low import (
     LowHttpAttackSessionRegistry,
     LowMySqlAgent,
     LowSshAgent,
+    LowUdpAgent,
 )
 from process_masking import apply_process_masking, resolve_process_name
 from profile_runtime import ProfileRuntime, TrapService, report_runtime_health
@@ -83,10 +84,14 @@ async def run() -> None:
                 "Low Trap Agent requires a low-interaction Trap Profile"
             )
         result: list[TrapService] = []
+        logging_settings = config.get("logging") or {}
         common = {
             "trap_id": UUID(config["trap_id"]),
             "host": os.getenv("LISTEN_HOST", "0.0.0.0"),
             "queue": queue,
+            "max_payload_bytes": int(logging_settings.get("max_payload_bytes", 4096)),
+            "capture_credentials": bool(logging_settings.get("capture_credentials", True)),
+            "capture_http_bodies": bool(logging_settings.get("capture_http_bodies", True)),
         }
         for definition in config["services"]:
             protocol = definition["protocol"]
@@ -107,6 +112,8 @@ async def run() -> None:
                 )
             elif protocol == "http":
                 service = LowHttpAgent(**settings, session_registry=http_sessions)
+            elif protocol == "udp":
+                service = LowUdpAgent(**settings)
             elif protocol == "mysql":
                 service = LowMySqlAgent(**settings)
             else:

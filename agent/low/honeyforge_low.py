@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from honeyforge_common.logging import redact_credentials
+from honeyforge_common.telemetry import captured_binary
 
 log = logging.getLogger(__name__)
 
@@ -444,7 +445,13 @@ class _LowTcpService:
         idle_timeout_seconds: float = 10,
         max_input_bytes: int = 64 * 1024,
         response_delay_ms: int = 0,
+        max_payload_bytes: int = 4096,
+        capture_credentials: bool = True,
+        capture_http_bodies: bool = True,
     ) -> None:
+        self.max_payload_bytes = max_payload_bytes
+        self.capture_credentials = capture_credentials
+        self.capture_http_bodies = capture_http_bodies
         self.trap_id = trap_id
         self.host = host
         self.requested_port = port
@@ -545,7 +552,7 @@ class _LowTcpService:
                     source_ip=source_ip,
                     source_port=source_port,
                 )
-            except (ConnectionError, OSError, TimeoutError):
+            except (ConnectionError, OSError, TimeoutError, asyncio.IncompleteReadError):
                 pass
         finally:
             self.queue.enqueue(
@@ -575,7 +582,7 @@ class _LowTcpService:
     ) -> dict[str, Any]:
         return {
             "id": str(uuid4()),
-            "schema_version": 1,
+            "schema_version": 2 if event_type == "payload_received" else 1,
             "trap_id": str(self.trap_id),
             "attack_session_id": attack_session_id,
             "event_type": event_type,
@@ -698,9 +705,29 @@ class LowHttpAgent(_LowTcpService):
         raw = b"".join(chunks)
         if len(raw) > self.max_input_bytes:
             return 0
+        header_block, separator, body = raw.partition(b"\r\n\r\n")
+        headers = {}
+        for header in header_block.split(b"\r\n")[1:]:
+            name, colon, value = header.partition(b":")
+            if colon:
+                headers[name.strip().lower()] = value.strip()
+        if b"transfer-encoding" in headers:
+            return 0
+        try:
+            length = int(headers.get(b"content-length", b"0"))
+        except ValueError:
+            return 0
+        if length < 0 or length + len(header_block) + 4 > self.max_input_bytes:
+            return 0
+        if length > len(body):
+            body += await asyncio.wait_for(reader.readexactly(length - len(body)), self.idle_timeout_seconds)
+        body = body[:length]
+        raw = header_block + separator + body
+        if body:
+            capture_input(self, body, kwargs, kind="http_body")
         line = raw.split(b"\r\n", 1)[0].decode("latin-1", errors="replace")
         parts = line.split(" ", 2)
-        if len(parts) == 3:
+        if len(parts) == 3 and len(parts[0]) <= 16 and len(parts[1]) <= 2048 and parts[2] in ("HTTP/1.0", "HTTP/1.1"):
             method, path, http_version = parts
             self.queue.enqueue(
                 self._event(
@@ -770,6 +797,7 @@ class LowMySqlAgent(_LowTcpService):
         received = await asyncio.wait_for(
             reader.read(self.max_input_bytes + 1), timeout=self.idle_timeout_seconds
         )
+        capture_input(self, received, kwargs, kind="tcp")
         if len(received) > self.max_input_bytes:
             return len(handshake)
         return len(handshake)
@@ -789,7 +817,13 @@ class LowSshAgent:
         connection_limit: int = 100,
         idle_timeout_seconds: float = 10,
         response_delay_ms: int = 0,
+        max_payload_bytes: int = 4096,
+        capture_credentials: bool = True,
+        capture_http_bodies: bool = True,
     ) -> None:
+        self.max_payload_bytes = max_payload_bytes
+        self.capture_credentials = capture_credentials
+        self.capture_http_bodies = capture_http_bodies
         self.trap_id = trap_id
         self.host = host
         self.requested_port = port
@@ -890,12 +924,23 @@ class LowSshAgent:
                 await asyncio.sleep(self.response_delay_seconds)
             writer.write(banner_bytes)
             await writer.drain()
+            received = bytearray()
             try:
-                await asyncio.wait_for(
-                    reader.read(), timeout=self.idle_timeout_seconds
-                )
+                # Keep established connections alive across profile replacement,
+                # while bounding both retained bytes and total observation time.
+                async with asyncio.timeout(self.idle_timeout_seconds):
+                    while len(received) < 65536:
+                        chunk = await reader.read(65536 - len(received))
+                        if not chunk:
+                            break
+                        received.extend(chunk)
             except TimeoutError:
                 pass
+            finally:
+                capture_input(self, bytes(received), {
+                    "attack_session_id": attack_session_id, "source_ip": source_ip,
+                    "source_port": source_port,
+                }, kind="tcp")
         finally:
             if attack_session_id is not None:
                 self.queue.enqueue(
@@ -924,7 +969,7 @@ class LowSshAgent:
     ) -> dict[str, Any]:
         return {
             "id": str(uuid4()),
-            "schema_version": 1,
+            "schema_version": 2 if event_type == "payload_received" else 1,
             "trap_id": str(self.trap_id),
             "attack_session_id": attack_session_id,
             "event_type": event_type,
@@ -935,3 +980,90 @@ class LowSshAgent:
             "target_port": self.port,
             "payload": payload,
         }
+
+
+def capture_input(service: Any, data: bytes, context: dict, *, kind: str) -> None:
+    if not data:
+        return
+    enabled = service.capture_credentials
+    if kind == "http_body":
+        enabled = enabled and service.capture_http_bodies
+    service.queue.enqueue(service._event(
+        attack_session_id=context["attack_session_id"], event_type="payload_received",
+        observed_at=datetime.now(UTC).isoformat(), source_ip=context["source_ip"],
+        source_port=int(context["source_port"]),
+        payload={"kind": kind, **captured_binary(data, max_bytes=service.max_payload_bytes, enabled=enabled)},
+    ))
+
+
+class LowUdpAgent(_LowTcpService, asyncio.DatagramProtocol):
+    """One bounded static answer per datagram; no service state or amplification."""
+    protocol = "udp"
+
+    def __init__(self, *, banner: str | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.udp_banner = banner or "Service ready"
+        self._transport: asyncio.DatagramTransport | None = None
+        self._closed: asyncio.Future | None = None
+        self._bound_port = self.requested_port
+
+    @property
+    def port(self) -> int:
+        return self._bound_port
+
+    def banner(self) -> str:
+        return self.udp_banner
+
+    async def prepare(self) -> None:
+        self._closed = asyncio.get_running_loop().create_future()
+        transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
+            lambda: self, local_addr=(self.host, self.requested_port))
+        self._transport = transport
+        self._bound_port = transport.get_extra_info("sockname")[1]
+
+    async def start_accepting(self) -> None:
+        if self._transport is None:
+            raise RuntimeError("Low UDP Service is not prepared")
+
+    def datagram_received(self, data: bytes, addr: tuple) -> None:
+        if not self._committed.is_set() or len(self._handlers) >= self.connection_limit:
+            return
+        task = asyncio.create_task(self._handle_datagram(data, addr))
+        self._handlers.add(task)
+        task.add_done_callback(self._handlers.discard)
+
+    async def _handle_datagram(self, data: bytes, addr: tuple) -> None:
+        context = {"attack_session_id": str(uuid4()), "source_ip": str(addr[0]), "source_port": int(addr[1])}
+        def emit(kind: str, payload: dict) -> None:
+            self.queue.enqueue(self._event(**context, event_type=kind,
+                observed_at=datetime.now(UTC).isoformat(), payload=payload))
+        emit("connection_opened", {"banner": self.banner()})
+        capture_input(self, data, context, kind="udp")
+        sent = 0
+        try:
+            if self.response_delay_seconds:
+                await asyncio.sleep(self.response_delay_seconds)
+            if self._transport is not None:
+                response = self.udp_banner.encode()[:min(512, len(data))]
+                if response:
+                    self._transport.sendto(response, addr)
+                    sent = len(response)
+        finally:
+            emit("connection_closed", {"bytes_sent": sent})
+
+    def connection_lost(self, exc: Exception | None) -> None:
+        if self._closed is not None and not self._closed.done():
+            self._closed.set_result(None)
+
+    async def stop_accepting(self) -> None:
+        if self._transport is not None:
+            self._transport.close()
+            self._transport = None
+            if self._closed is not None:
+                await self._closed
+
+    async def stop(self) -> None:
+        await self.stop_accepting()
+        for task in tuple(self._handlers):
+            task.cancel()
+        await self.wait_drained()

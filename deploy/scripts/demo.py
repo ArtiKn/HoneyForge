@@ -24,6 +24,8 @@ DEMO_PORTS = {
     "low_mysql": 33060,
     "medium_ssh": 2223,
     "medium_http": 8081,
+    "medium_mysql": 33061,
+    "low_udp": 9999,
 }
 
 
@@ -77,6 +79,8 @@ def ensure_demo_env(path: Path = ENV_FILE) -> dict[str, str]:
     values.setdefault("MEDIUM_HTTP_PORT", str(DEMO_PORTS["medium_http"]))
     values.setdefault("LOW_HTTP_PORT", str(DEMO_PORTS["low_http"]))
     values.setdefault("LOW_MYSQL_PORT", str(DEMO_PORTS["low_mysql"]))
+    values.setdefault("LOW_UDP_PORT", str(DEMO_PORTS["low_udp"]))
+    values.setdefault("MEDIUM_MYSQL_PORT", str(DEMO_PORTS["medium_mysql"]))
     values.setdefault("AGENT_CENTER_URL", "https://assets.cdn-static.example:8443")
     values["HOST_SECRET_GID"] = str(path.parent.stat().st_gid)
 
@@ -105,6 +109,8 @@ def deterministic_targets(host: str = "127.0.0.1") -> dict[str, tuple[str, int]]
         "mysql_low": (host, DEMO_PORTS["low_mysql"]),
         "ssh_medium": (host, DEMO_PORTS["medium_ssh"]),
         "http_medium": (host, DEMO_PORTS["medium_http"]),
+        "mysql_medium": (host, DEMO_PORTS["medium_mysql"]),
+        "udp_low": (host, DEMO_PORTS["low_udp"]),
     }
 
 
@@ -117,7 +123,7 @@ def wait_for_targets(
     targets: dict[str, tuple[str, int]], timeout: float = 30
 ) -> None:
     deadline = time.monotonic() + timeout
-    pending = dict(targets)
+    pending = {name: target for name, target in targets.items() if name != "udp_low"}
     while pending and time.monotonic() < deadline:
         for name, address in list(pending.items()):
             try:
@@ -150,6 +156,12 @@ def run_demo_attack(host: str = "127.0.0.1", timeout: float = 3.0) -> dict[str, 
     with socket.create_connection(targets["http_medium"], timeout=timeout) as connection:
         connection.sendall(b"GET /demo HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
         results["http_medium"] = connection.recv(512).decode(errors="replace").splitlines()[0]
+    with socket.create_connection(targets["mysql_medium"], timeout=timeout) as connection:
+        results["mysql_medium"] = connection.recv(512).decode(errors="replace").strip()
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as connection:
+        connection.settimeout(timeout)
+        connection.sendto(b"HoneyForge UDP demo", targets["udp_low"])
+        results["udp_low"] = connection.recv(512).decode(errors="replace")
     return results
 
 
@@ -306,12 +318,14 @@ def _wait_for_rest_security_events(
     )
 
 
-def _json_request(opener: Any, url: str, *, method: str = "GET", payload: dict[str, Any] | None = None) -> Any:
+def _json_request(opener: Any, url: str, *, method: str = "GET", payload: dict[str, Any] | None = None, if_match: int | None = None) -> Any:
     body = json.dumps(payload).encode() if payload is not None else None
     headers = {
         "Content-Type": "application/json",
         "Origin": url.split("/api/", 1)[0],
     }
+    if if_match is not None:
+        headers["If-Match"] = f'"{if_match}"'
     if "/assets/v2/" in url:
         headers["Host"] = "assets.cdn-static.example"
     request = Request(
@@ -364,10 +378,12 @@ def seed_demo(base_url: str, ca_file: Path, values: dict[str, str]) -> None:
             {"protocol": "ssh", "internal_port": 22, "banner": "SSH-2.0-OpenSSH_8.9p1"},
             {"protocol": "http", "internal_port": 80, "banner": "nginx/1.24.0"},
             {"protocol": "mysql", "internal_port": 3306, "banner": "5.7.42-MySQL"},
+            {"protocol": "udp", "internal_port": 9999, "banner": "Service ready"},
         ]},
         "Demo Medium": {"interaction_level": "medium", "services": [
             {"protocol": "ssh", "internal_port": 22, "banner": "OpenSSH_8.9p1", "emulator_settings": {"max_attempts": 5, "response_delay_ms": 150}},
             {"protocol": "http", "internal_port": 80, "banner": "nginx/1.24.0"},
+            {"protocol": "mysql", "internal_port": 3306, "banner": "8.0.36"},
         ], "decoy_credentials": [
             {"username": "svc-backup", "password": "Backup!2026"},
             {"username": "admin", "password": "Summer2026!"},
@@ -384,9 +400,22 @@ def seed_demo(base_url: str, ca_file: Path, values: dict[str, str]) -> None:
     trap_profile_ids: dict[str, str] = {}
     for name, spec in trap_profile_specs.items():
         existing = next((item for item in trap_profiles if item["name"] == name), None)
-        trap_profile_ids[name] = existing["id"] if existing else _json_request(
-            opener, f"{base_url}/api/v1/trap-profiles", method="POST", payload={"name": name, **spec}
-        )["id"]
+        if existing is None:
+            existing = _json_request(
+                opener, f"{base_url}/api/v1/trap-profiles", method="POST", payload={"name": name, **spec}
+            )
+        else:
+            # Add newly supported demo services without replacing operator settings.
+            additions = [service for service in spec["services"]
+                         if not any(item["protocol"] == service["protocol"] for item in existing["services"])]
+            if additions:
+                editable = {key: existing[key] for key in ("name", "interaction_level", "services", "decoy_credentials", "logging", "masking")}
+                editable["services"] = [*existing["services"], *additions]
+                existing = _json_request(
+                    opener, f"{base_url}/api/v1/trap-profiles/{existing['id']}",
+                    method="PUT", payload=editable, if_match=existing["version"],
+                )
+        trap_profile_ids[name] = existing["id"]
     traps = _json_request(opener, f"{base_url}/api/v1/traps")
     secret_dir = ROOT / "secrets"
     secret_dir.mkdir(exist_ok=True)

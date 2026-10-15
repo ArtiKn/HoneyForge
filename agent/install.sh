@@ -64,7 +64,9 @@ else
     install -m 0644 "${AGENT_DIR}/low/${module}.py" "${INSTALL_DIR}/agent/low/${module}.py"
   done
   install -m 0644 "${AGENT_DIR}/medium/main.py" "${INSTALL_DIR}/agent/medium/main.py"
-  install -m 0644 "${AGENT_DIR}/medium/http_service.py" "${INSTALL_DIR}/agent/medium/http_service.py"
+  for module in http_service fake_fs mysql_service; do
+    install -m 0644 "${AGENT_DIR}/medium/${module}.py" "${INSTALL_DIR}/agent/medium/${module}.py"
+  done
   exec_start="${PYTHON} -m agent.medium.main"
 fi
 

@@ -135,9 +135,11 @@ async def test_medium_ssh_applies_logging_settings(tmp_path: Path) -> None:
     command = next(
         event for event in events if event["event_type"] == "command_entered"
     )
+    assert attempt["payload"]["username"] == "<redacted>"
     assert attempt["payload"]["password"] == "<redacted>"
     assert attempt["payload"]["accepted"] is True
     assert command["payload"]["command"] == "<redacted>"
+    assert command["payload"]["cwd"] == "<redacted>"
 
 
 async def test_medium_ssh_applies_response_delay(tmp_path: Path) -> None:

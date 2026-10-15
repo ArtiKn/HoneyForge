@@ -107,7 +107,7 @@ make demo-smoke
 ```
 
 Внешние порты demo: Control Center `8443`; Low SSH/HTTP/MySQL `2222`, `8080`,
-`33060`; Medium SSH/HTTP `2223`, `8081`. `make demo` безопасен для повторного
+`33060`, UDP `9999/udp`; Medium SSH/HTTP/MySQL `2223`, `8081`, `33061`. `make demo` безопасен для повторного
 запуска и не удаляет PostgreSQL volume.
 
 На Control Center:
@@ -158,3 +158,22 @@ Nginx ограничивает Agent endpoint по размеру запроса
 соединений. Access logs используют JSON и записывают только `$uri` без query;
 приложения дополнительно редактируют Bearer credentials, Enrollment Tokens,
 Trap Secrets, JWT и пароли.
+
+
+### Payload, fake-FS, UDP и fake-БД
+
+Для существующего развёртывания сначала примените `alembic upgrade head`
+в окружении Control Center, затем пересоберите образы Agent. Новые события
+используют wire schema 2; события schema 1 продолжают приниматься.
+Добавьте в Low Trap Profile сервис `udp` (например, порт 9999), а в Medium
+Trap Profile — `mysql` (3306). Команда `make demo` создаёт эти сервисы и добавляет их в существующие demo-профили.
+При ручной установке откройте соответствующие порты и установите обновлённые
+модули через `agent/install.sh`.
+
+Примеры проверки: `printf 'probe-payload' | nc -u -w 1 localhost 9999`,
+`mysql --protocol=TCP --host=127.0.0.1 --port=33061 --user=admin -p`
+(для demo пароль `Summer2026!`). В fake-БД: `SHOW DATABASES; USE app;
+SHOW TABLES; SELECT * FROM users;`. В SSH: `cd /var/www/html`, `ls`,
+`cat config.php`. В таблице событий доступны фильтры «Получен payload»
+и «Запрос к БД»; payload хранится в JSON с base64-фрагментом и метаданными.
+Это сбор ограниченного фрагмента, без отдельного хранилища полных файлов.

@@ -71,7 +71,7 @@
             <label class="check"><input type="checkbox" name="capture_credentials" checked /> Записывать отправленные учётные данные</label>
             <label class="check"><input type="checkbox" name="capture_commands" checked /> Записывать команды оболочки</label>
             <label class="check"><input type="checkbox" name="capture_http_bodies" checked /> Записывать тела HTTP-запросов</label>
-            <label class="field"><span>Макс. размер данных (байт)</span><input type="number" name="max_payload_bytes" min="0" max="1048576" value="4096" /></label>
+            <label class="field"><span>Лимит данных на поле (байт)</span><input type="number" name="max_payload_bytes" min="0" max="1048576" value="4096" /></label>
           </div>
         </div>
         <div class="services reveal">
@@ -92,7 +92,7 @@
   </main>
   <template id="service-template">
     <div class="service-row">
-            <label class="field"><span>Протокол</span><select name="protocol"><option>ssh</option><option>http</option><option>mysql</option></select></label>
+            <label class="field"><span>Протокол</span><select name="protocol"><option>ssh</option><option>http</option><option>mysql</option><option>udp</option></select></label>
       <label class="field"><span>Внутренний порт</span><input name="internal_port" type="number" min="1" max="65535" required /></label>
       <label class="field banner-field"><span>Баннер (необязательно)</span><input name="banner" maxlength="1024" autocomplete="off" /></label>
       <label class="field settings-field"><span>Настройки эмулятора (JSON)</span><textarea name="emulator_settings" spellcheck="false">{}</textarea></label>

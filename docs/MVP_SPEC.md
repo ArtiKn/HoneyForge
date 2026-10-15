@@ -10,7 +10,7 @@ The attached work plan is the source of scope: items marked Must define the MVP 
 
 An interaction with either the Low or Medium Trap becomes a normalized Security Event, is durably buffered by the Agent during an outage, is delivered over authenticated TLS, is stored in PostgreSQL exactly once despite retries, and appears in the authenticated UI through the recoverable realtime feed.
 
-The Low Trap exposes static SSH, HTTP, and MySQL banner services. The Medium Trap exposes interactive fake-SSH and fake-HTTP services. Emulators implement only fixed behavior over a fictitious filesystem and never execute attacker input in a host shell, subprocess, Docker socket, or host filesystem.
+The Low Trap exposes static SSH, HTTP, MySQL, and UDP banner services. The Medium Trap exposes interactive fake-SSH, fake-HTTP, and fake-MySQL services. Emulators implement only fixed behavior over a fictitious filesystem and never execute attacker input in a host shell, subprocess, Docker socket, or host filesystem.
 
 ## Domain model
 
@@ -39,7 +39,7 @@ An Operator pre-creates a Trap and issues a hashed, single-use Enrollment Token 
 
 Trap Status is one of `provisioning`, `online`, `degraded`, `offline`, or `revoked`. Agents send health and profile checks every 30 seconds; absence for 90 seconds makes a Trap offline. These intervals are configurable.
 
-A Trap Profile is versioned and contains an interaction level plus service definitions with protocol, internal port, and banner or emulator settings. It excludes deployment addresses and secrets. An Agent atomically applies an assigned version to new connections while existing connections finish on the old version. Invalid configuration or occupied ports leave the last good version active and put the Trap into `degraded`. Profile updates use version/ETag conflict detection.
+A Trap Profile is versioned and contains an interaction level plus service definitions with protocol, internal port, and banner or emulator settings. It excludes deployment addresses and secrets. Write requests reject Medium UDP services, duplicate ports within the same transport, and empty or multiline banners before storing a profile. Existing unsupported profiles remain readable so an Operator can repair them. An Agent atomically applies an assigned version to new connections while existing connections finish on the old version. Invalid configuration or occupied ports leave the last good version active and put the Trap into `degraded`. Profile updates use version/ETag conflict detection.
 
 ## Event contract and delivery
 
@@ -71,7 +71,7 @@ The Agent runs unprivileged as `honeyforge-agent` and masks its process title, t
 
 `make demo` is the idempotent single entry point: it creates local configuration and certificates when absent, builds images, starts PostgreSQL, API/UI/Nginx and both Traps, applies migrations, and seeds demo records. Re-running it preserves data. Local Python is not required.
 
-The supported demo environment is Linux on x86-64 or arm64 with Docker Engine and Compose v2. External ports are Control Center `8443`; Low SSH/HTTP/MySQL `2222`, `8080`, and `33060`; Medium SSH/HTTP `2223` and `8081`.
+The supported demo environment is Linux on x86-64 or arm64 with Docker Engine and Compose v2. External ports are Control Center `8443`; Low SSH/HTTP/MySQL/UDP `2222/tcp`, `8080/tcp`, `33060/tcp`, and `9999/udp`; Medium SSH/HTTP/MySQL `2223/tcp`, `8081/tcp`, and `33061/tcp`.
 
 The Control Center and Trap compose definitions can also be deployed on separate hosts without changing service images or the domain model. Published production data is not yet supported, so the scaffold's initial migration may be replaced by the canonical schema.
 
@@ -82,3 +82,14 @@ The repository must contain unit tests for domain behavior, PostgreSQL integrati
 The MVP is accepted only when a clean environment passes image build, migrations, unit/integration/end-to-end tests, `make demo`, and the documented manual scenario. Required evidence includes an accurate README, architecture and database diagrams, API/profile/deployment/masking documentation, demo script and walkthrough, working UI screenshots, presentation, and a test report. Documentation must describe observed behavior rather than planned behavior.
 
 After that gate, Bonus work is considered in this order: beacon jitter, CSV export, dashboard charts, then honeytokens. GeoIP, maps, orchestration, STIX, mTLS, high-interaction execution, and Prometheus metrics remain later options.
+
+
+## Extended service behavior
+
+Wire schema versions 1 and 2 coexist. Version 2 adds `payload_received` and `database_query`, plus native-password challenge-response metadata for MySQL authentication. Payload capture stores a base64 fragment in the event, bounded by `logging.max_payload_bytes` and a hard 64 KiB cap, with observed size, capture size, truncation and SHA-256 of the observed input. HTTP requests are limited to 64 KiB including headers; larger requests and Transfer-Encoding are rejected, not buffered indefinitely. TCP banner capture records a bounded input window, not an unlimited stream (SSH: up to 64 KiB before EOF or its connection timeout; Low MySQL: one bounded read). No full-file artifact storage is implemented. Disable `capture_http_bodies` to redact bodies; disable `capture_credentials` to redact all raw payload capture as well as credentials, avoiding duplicate credential capture through bodies or binary streams. Redaction omits the digest too.
+
+SSH supports `pwd`, `cd`, `ls`, `cat`, `whoami`, `uname`, `help` and `exit` over a per-channel read-only Fake Filesystem. The tree contains fictitious `/etc`, `/home`, `/var/www/html` and `/var/log` contents. Mutations, processes, pipelines and real filesystem access are unavailable.
+
+Medium MySQL implements the protocol-10 handshake, `mysql_native_password`, optional Trap Profile decoy credentials, COM_QUERY, COM_INIT_DB, COM_PING and COM_QUIT. Without configured MySQL credentials it accepts any valid native-password response, matching the existing permissive Medium behavior. Plaintext passwords cannot be recovered from challenge-response authentication: telemetry records the username, challenge hex, response hex, scheme and acceptance result. It responds to SELECT 1, VERSION(), DATABASE(), SHOW DATABASES/TABLES, DESCRIBE users, and simple SELECT columns FROM users/settings [LIMIT n]. Tables contain only fictitious data; unsupported SQL receives a MySQL error. TLS, prepared statements and database writes are outside this emulator's scope. Each connection has an independent selected database, a 64 KiB packet limit, idle timeout and 100-command limit.
+
+Low UDP returns a static banner capped at 512 bytes and at the incoming datagram size, so its response never amplifies traffic. Its listener participates in atomic Trap Profile apply, disable and rollback. TCP and UDP may share the same numeric port.

@@ -46,6 +46,8 @@ def test_deterministic_targets_are_local_demo_ports_only() -> None:
         "mysql_low": ("127.0.0.1", DEMO_PORTS["low_mysql"]),
         "ssh_medium": ("127.0.0.1", DEMO_PORTS["medium_ssh"]),
         "http_medium": ("127.0.0.1", DEMO_PORTS["medium_http"]),
+        "mysql_medium": ("127.0.0.1", DEMO_PORTS["medium_mysql"]),
+        "udp_low": ("127.0.0.1", DEMO_PORTS["low_udp"]),
     }
     assert all(host in {"127.0.0.1", "localhost"} for host, _ in targets.values())
 
@@ -71,3 +73,41 @@ def test_acceptance_package_exists() -> None:
     assert "demo:" in makefile
     assert "demo-attack:" in makefile
     assert "demo-smoke:" in makefile
+
+
+def test_seed_adds_new_services_to_existing_demo_profiles(tmp_path, monkeypatch):
+    from deploy.scripts import demo
+    import copy
+
+    monkeypatch.setattr(demo, "ROOT", tmp_path)
+    monkeypatch.setattr(demo.ssl, "create_default_context", lambda **kwargs: object())
+    monkeypatch.setattr(demo, "build_opener", lambda *args: object())
+    secret_dir = tmp_path / "secrets"
+    secret_dir.mkdir()
+    for name in ("low_trap_secret", "medium_trap_secret"):
+        (secret_dir / name).write_text("existing-secret")
+    profiles = [{
+        "id": level, "name": f"Demo {level.title()}", "version": 7,
+        "interaction_level": level,
+        "services": [{"protocol": "ssh", "internal_port": 22}],
+        "decoy_credentials": [], "logging": {"max_payload_bytes": 17}, "masking": {},
+    } for level in ("low", "medium")]
+    updates = []
+    def request(opener, url, *, method="GET", payload=None, if_match=None):
+        if url.endswith('/auth/login'):
+            return {}
+        if url.endswith('/trap-profiles'):
+            return copy.deepcopy(profiles)
+        if '/trap-profiles/' in url:
+            assert method == 'PUT' and if_match == 7
+            assert payload['logging'] == {'max_payload_bytes': 17}
+            updates.append(payload)
+            return {**payload, 'id': url.rsplit('/', 1)[1], 'version': 8}
+        if url.endswith('/traps'):
+            return [{'id': p['id'], 'name': p['name'], 'enabled': True,
+                     'status': 'online', 'is_archived': False} for p in profiles]
+        raise AssertionError(url)
+    monkeypatch.setattr(demo, '_json_request', request)
+    demo.seed_demo('https://test', tmp_path / 'ca.crt', {'OPERATOR_USERNAME': 'operator', 'OPERATOR_PASSWORD': 'test'})
+    assert {s['protocol'] for s in updates[0]['services']} == {'ssh', 'http', 'mysql', 'udp'}
+    assert {s['protocol'] for s in updates[1]['services']} == {'ssh', 'http', 'mysql'}

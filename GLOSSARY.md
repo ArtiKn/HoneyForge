@@ -33,7 +33,7 @@ A normalized record of one security-relevant observation made by a Trap.
 _Avoid_: Event, log entry, telemetry event
 
 **Attack Session**:
-A bounded sequence of related Security Events observed by one Trap: one connection for connection-oriented protocols, or same-source HTTP activity separated by no more than 15 minutes of inactivity.
+A bounded sequence of related Security Events observed by one Trap: one connection for connection-oriented protocols, same-source HTTP activity separated by no more than 15 minutes of inactivity, or one UDP datagram and its static response.
 _Avoid_: Session, user session, connection
 
 **Operator**:
@@ -75,3 +75,15 @@ _Avoid_: MySQL database, SQL server
 **Medium HTTP Service**:
 An interactive Trap service that presents a coherent fictitious web application, records requests and authentication attempts, and never reads or changes real application or host data.
 _Avoid_: Admin application, web application, management UI
+
+**Low UDP Service**:
+A low-interaction Trap service that records one datagram and returns a bounded static banner without implementing a real UDP application protocol. Each datagram forms its own Attack Session.
+
+**Fake Filesystem**:
+A fictitious, read-only tree held in memory for one SSH channel. Navigation changes that channel's working directory and never accesses the host filesystem.
+
+**Medium MySQL Service**:
+An interactive Trap service that implements a bounded MySQL handshake, native-password authentication and read-only SQL responses over fictitious tables without connecting to a database engine.
+
+**Captured Payload**:
+A bounded binary fragment observed by a Trap, accompanied by its observed byte length, capture length, truncation state and optional SHA-256 digest. It is not a full stored file artifact.

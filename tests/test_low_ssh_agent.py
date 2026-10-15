@@ -155,7 +155,7 @@ async def test_mysql_service_returns_handshake_and_enforces_input_limit(
         await writer.drain()
         writer.close()
         await writer.wait_closed()
-        await _wait_for_events(queue, count=2)
+        await _wait_for_events(queue, count=3)
     finally:
         await agent.stop()
 
@@ -165,6 +165,7 @@ async def test_mysql_service_returns_handshake_and_enforces_input_limit(
     events = queue.pending(limit=10)
     assert [event["event_type"] for event in events] == [
         "connection_opened",
+        "payload_received",
         "connection_closed",
     ]
     assert events[0]["target_service"] == "mysql"

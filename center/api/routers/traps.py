@@ -261,6 +261,30 @@ async def revoke_trap(
     return trap
 
 
+@router.post("/{trap_id}/restore", response_model=TrapProvisioned)
+async def restore_trap(
+    trap_id: UUID,
+    operator: AdminOperator,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> TrapProvisioned:
+    """Bring an archived or revoked Trap back and issue a fresh enrollment token."""
+
+    trap = await session.scalar(select(Trap).where(Trap.id == trap_id).with_for_update())
+    if trap is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    access = TrapAccess(
+        session,
+        enrollment_minutes=request.app.state.settings.enrollment_token_minutes,
+    )
+    access.restore(trap, operator.id, request.client.host if request.client else None)
+    enrollment_token = await access.issue(trap)
+    return TrapProvisioned(
+        **TrapRead.model_validate(trap).model_dump(),
+        enrollment_token=enrollment_token,
+    )
+
+
 @router.post("/{trap_id}/enrollment-token", response_model=EnrollmentTokenResponse)
 async def reissue_enrollment_token(
     trap_id: UUID,

@@ -296,13 +296,33 @@ class AgentClient:
     """Verified-TLS adapter for the masked Agent interface."""
 
     def __init__(
-        self, base_url: str, trap_secret: str, *, ca_file: Path | None = None
+        self, base_url: str, trap_secret: str, *, ca_file: Path | None = None,
+        secret_file: Path | None = None,
     ) -> None:
         if not base_url.startswith("https://"):
             raise ValueError("Agent API requires HTTPS")
         self.base_url = base_url.rstrip("/")
         self.trap_secret = trap_secret
+        self._secret_file = secret_file
         self.ssl_context = ssl.create_default_context(cafile=ca_file)
+
+    def reload_secret(self) -> bool:
+        """Re-read the Trap secret from disk after an operator re-enrollment.
+
+        Returns whether a different secret was loaded; the next request then
+        authenticates with it, so a restored Trap recovers without a restart.
+        """
+
+        if self._secret_file is None:
+            return False
+        try:
+            secret = self._secret_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            return False
+        if secret and secret != self.trap_secret:
+            self.trap_secret = secret
+            return True
+        return False
 
     async def fetch_configuration(self) -> dict[str, Any]:
         request = Request(

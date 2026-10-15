@@ -16,7 +16,7 @@ HONEY  := $(COMPOSE) $(HONEY_FILE) $(DEMO_FILE)
 HONEY_DISTRIBUTED := $(COMPOSE) $(HONEY_FILE)
 
 .PHONY: help env up down restart logs ps build config test certs demo demo-env demo-seed demo-attack demo-smoke \
-        honeypots-up honeypots-down honeypots-build honeypots-config \
+        demo-reset honeypots-up honeypots-down honeypots-build honeypots-config \
         honeypots-distributed-config clean
 
 help: ## Show available commands
@@ -35,8 +35,13 @@ demo-env: ## Create secure local demo configuration without overwriting it
 demo: demo-env certs ## Start the complete idempotent local MVP demo
 	$(CENTER) up -d --build --force-recreate
 	@$(DEMO_PY) deploy/scripts/demo.py seed
-	$(HONEY) up -d --build
+	$(HONEY) up -d --build --force-recreate
 	@echo "[demo] Control Center: https://localhost:$${CENTER_HTTPS_PORT:-8443}"
+
+demo-reset: ## Remove the demo stack, volumes, certificates-free state for a clean run
+	-$(COMPOSE) $(CENTER_FILE) $(HONEY_FILE) $(DEMO_FILE) down -v --remove-orphans
+	-rm -f secrets/low_trap_secret secrets/medium_trap_secret
+	@echo "[demo-reset] removed demo volumes and Trap credentials; run 'make demo' for a clean stand"
 
 demo-seed: env certs ## Seed demo Trap Profiles, Traps and persistent credentials
 	@$(DEMO_PY) deploy/scripts/demo.py seed

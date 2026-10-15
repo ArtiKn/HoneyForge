@@ -132,6 +132,23 @@ class TrapAccess:
         self._audit(trap, "trap.archived", source_ip, operator_id)
         return True
 
+    def restore(self, trap: Trap, operator_id: UUID, source_ip: str | None) -> None:
+        """Return a Trap to an enabled, enrollable state.
+
+        This un-archives the Trap, re-enables its services and drops any
+        credential overlap so the caller can hand out a fresh enrollment token.
+        A working Agent re-enrols and reports health to move it back to
+        ``online``; the previous secret stays valid until then.
+        """
+
+        trap.is_archived = False
+        trap.enabled = True
+        trap.status = "provisioning"
+        trap.enrollment_token_used_at = None
+        trap.previous_secret_hash = None
+        trap.previous_secret_valid_until = None
+        self._audit(trap, "trap.restored", source_ip, operator_id)
+
     def report_health(
         self,
         trap: Trap,

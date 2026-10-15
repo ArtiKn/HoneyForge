@@ -7,7 +7,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from uuid import UUID
 
 from honeyforge_low import (
@@ -28,6 +28,32 @@ logging.basicConfig(level=logging.INFO, handlers=[log_handler])
 log = logging.getLogger(resolve_process_name())
 
 
+async def _fetch_configuration(client: AgentClient) -> dict[str, Any]:
+    """Wait for the Control Center to return this Trap's configuration.
+
+    A freshly started stack may not be reachable yet, and an Agent that lost
+    its Trap secret must not crash-loop; it keeps retrying with backoff so an
+    operator can restore the Trap and the Agent recovers on its own.
+    """
+
+    delay = 2.0
+    while True:
+        try:
+            return await client.fetch_configuration()
+        except (OSError, URLError, ValueError) as exc:
+            reload_on_auth_error(client, exc)
+            log.exception("Trap configuration fetch failed; retrying in %.0fs", delay)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 15.0)
+
+
+def reload_on_auth_error(client: AgentClient, exc: BaseException) -> None:
+    """Reload the on-disk Trap secret when the center rejects our credentials."""
+
+    if isinstance(exc, HTTPError) and exc.code == 401:
+        client.reload_secret()
+
+
 async def run() -> None:
     """Apply the assigned Low SSH profile and continuously deliver events."""
 
@@ -39,8 +65,9 @@ async def run() -> None:
         os.environ["CENTER_URL"],
         trap_secret,
         ca_file=Path(ca_file) if ca_file else None,
+        secret_file=secret_file,
     )
-    configuration = await client.fetch_configuration()
+    configuration = await _fetch_configuration(client)
     if configuration["interaction_level"] != "low":
         raise RuntimeError("Low Trap Agent requires a low-interaction Trap Profile")
     queue = EventQueue(
@@ -98,7 +125,8 @@ async def run() -> None:
         while True:
             try:
                 await client.deliver_pending(queue)
-            except (OSError, URLError, ValueError):
+            except (OSError, URLError, ValueError) as exc:
+                reload_on_auth_error(client, exc)
                 log.exception("Security Event delivery failed; events remain queued")
             now = asyncio.get_running_loop().time()
             if now >= next_profile_at:
@@ -109,7 +137,8 @@ async def run() -> None:
                             runtime.enabled,
                             runtime.active_profile_version,
                         )
-                except (OSError, URLError, RuntimeError, ValueError):
+                except (OSError, URLError, RuntimeError, ValueError) as exc:
+                    reload_on_auth_error(client, exc)
                     log.exception("Trap Profile check or apply failed")
                 next_profile_at = now + profile_interval
             if now >= next_health_at:
@@ -120,7 +149,8 @@ async def run() -> None:
                         agent_version=os.getenv("AGENT_VERSION", "0.1.0"),
                         runtime=runtime,
                     )
-                except (OSError, URLError, ValueError):
+                except (OSError, URLError, ValueError) as exc:
+                    reload_on_auth_error(client, exc)
                     log.exception("Agent Health Report delivery failed")
                 else:
                     next_health_at = now + health_interval

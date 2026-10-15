@@ -1669,3 +1669,111 @@ async def test_delete_removes_an_unused_trap_and_archives_a_referenced_one(
     assert still_there.json()["is_archived"] is True
     assert still_there.json()["enabled"] is False
 
+
+async def test_archived_trap_is_restored_and_reenrolled(
+    lifecycle_app, lifecycle_client
+) -> None:
+    created = await precreate_trap(
+        lifecycle_client,
+        name="restore-archived",
+        profile_name="Restore archived profile",
+    )
+    original_secret = await enroll_trap(lifecycle_client, created)
+    await lifecycle_client.post(
+        f"/api/v1/traps/{created['id']}/archive", headers={"Origin": "https://test"}
+    )
+
+    restored = await lifecycle_client.post(
+        f"/api/v1/traps/{created['id']}/restore", headers={"Origin": "https://test"}
+    )
+    assert restored.status_code == 200
+    body = restored.json()
+    assert body["is_archived"] is False
+    assert body["enabled"] is True
+    assert body["status"] == "provisioning"
+    assert body["display_status"] == "provisioning"
+    assert body["enrollment_token"].startswith(f"{created['id']}.")
+
+    # Archiving keeps the credential, so the running Agent stays authenticated.
+    assert (
+        await lifecycle_client.get(
+            "/assets/v2/config", headers=authorization(original_secret)
+        )
+    ).status_code == 200
+
+    reenrolled = await lifecycle_client.post(
+        "/assets/v2/enroll", json={"enrollment_token": body["enrollment_token"]}
+    )
+    assert reenrolled.status_code == 200
+    fresh_secret = reenrolled.json()["trap_secret"]
+    assert fresh_secret != original_secret
+    assert (
+        await lifecycle_client.post(
+            "/assets/v2/health",
+            headers=authorization(fresh_secret),
+            json=health_report(),
+        )
+    ).status_code == 204
+
+    async with lifecycle_app.state.database.session_factory() as session:
+        trap = await session.get(Trap, created["id"])
+        actions = list(
+            await session.scalars(
+                select(AuditEntry.action)
+                .where(AuditEntry.entity_id == trap.id)
+                .order_by(AuditEntry.id)
+            )
+        )
+    assert trap.status == "online"
+    assert trap.is_archived is False
+    assert "trap.restored" in actions
+
+
+async def test_revoked_trap_is_restored_and_reenrolled(
+    lifecycle_app, lifecycle_client
+) -> None:
+    created = await precreate_trap(
+        lifecycle_client,
+        name="restore-revoked",
+        profile_name="Restore revoked profile",
+    )
+    revoked_secret = await enroll_trap(lifecycle_client, created)
+    await lifecycle_client.post(
+        f"/api/v1/traps/{created['id']}/revoke", headers={"Origin": "https://test"}
+    )
+    assert (
+        await lifecycle_client.get(
+            "/assets/v2/config", headers=authorization(revoked_secret)
+        )
+    ).status_code == 401
+
+    restored = await lifecycle_client.post(
+        f"/api/v1/traps/{created['id']}/restore", headers={"Origin": "https://test"}
+    )
+    assert restored.status_code == 200
+    body = restored.json()
+    assert body["status"] == "provisioning"
+    assert body["enabled"] is True
+    assert body["is_archived"] is False
+    assert body["enrollment_token"]
+
+    reenrolled = await lifecycle_client.post(
+        "/assets/v2/enroll", json={"enrollment_token": body["enrollment_token"]}
+    )
+    assert reenrolled.status_code == 200
+    fresh_secret = reenrolled.json()["trap_secret"]
+    assert fresh_secret != revoked_secret
+    assert (
+        await lifecycle_client.post(
+            "/assets/v2/health",
+            headers=authorization(fresh_secret),
+            json=health_report(),
+        )
+    ).status_code == 204
+
+    async with lifecycle_app.state.database.session_factory() as session:
+        trap = await session.get(Trap, created["id"])
+    assert trap.status == "online"
+    assert trap.is_archived is False
+    assert trap.current_secret_hash is not None
+

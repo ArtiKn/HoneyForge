@@ -337,6 +337,21 @@ def wait_ready(base_url: str, ca_file: Path, timeout: float = 180) -> None:
     raise TimeoutError(f"HoneyForge did not become ready within {timeout:.0f}s")
 
 
+def _enroll_and_store(
+    opener: Any, base_url: str, secret_file: Path, enrollment_token: str
+) -> None:
+    """Enroll a Trap with a fresh token and persist its secret for the Agent."""
+
+    enrolled = _json_request(
+        opener,
+        f"{base_url}/assets/v2/enroll",
+        method="POST",
+        payload={"enrollment_token": enrollment_token},
+    )
+    secret_file.write_text(enrolled["trap_secret"] + "\n")
+    secret_file.chmod(0o640)
+
+
 def seed_demo(base_url: str, ca_file: Path, values: dict[str, str]) -> None:
     context = ssl.create_default_context(cafile=str(ca_file))
     opener = build_opener(HTTPCookieProcessor(), HTTPSHandler(context=context))
@@ -381,34 +396,45 @@ def seed_demo(base_url: str, ca_file: Path, values: dict[str, str]) -> None:
     ):
         existing = next((item for item in traps if item["name"] == name), None)
         secret_file = secret_dir / secret_name
-        if existing:
-            if not secret_file.exists():
-                if existing["status"] != "provisioning":
-                    raise RuntimeError(
-                        f"{secret_file} is missing for an online Trap; refusing to rotate credentials"
-                    )
-                token = _json_request(
-                    opener,
-                    f"{base_url}/api/v1/traps/{existing['id']}/enrollment-token",
-                    method="POST",
-                )["enrollment_token"]
-                enrolled = _json_request(
-                    opener,
-                    f"{base_url}/assets/v2/enroll",
-                    method="POST",
-                    payload={"enrollment_token": token},
-                )
-                secret_file.write_text(enrolled["trap_secret"] + "\n")
-                secret_file.chmod(0o640)
+        if existing is None:
+            created = _json_request(
+                opener, f"{base_url}/api/v1/traps", method="POST", payload={
+                    "name": name,
+                    "trap_profile_id": trap_profile_ids[trap_profile_name],
+                    "hostname": name.lower().replace(" ", "-"),
+                },
+            )
+            _enroll_and_store(
+                opener, base_url, secret_file, created["enrollment_token"]
+            )
             continue
-        created = _json_request(opener, f"{base_url}/api/v1/traps", method="POST", payload={
-            "name": name, "trap_profile_id": trap_profile_ids[trap_profile_name], "hostname": name.lower().replace(" ", "-")
-        })
-        enrolled = _json_request(opener, f"{base_url}/assets/v2/enroll", method="POST", payload={
-            "enrollment_token": created["enrollment_token"]
-        })
-        secret_file.write_text(enrolled["trap_secret"] + "\n")
-        secret_file.chmod(0o640)
+        # An existing demo Trap is reconciled from its lifecycle state, because
+        # manual UI experimentation can leave it archived, revoked or
+        # un-enrolled. A healthy Trap is always ``online``/``degraded``/
+        # ``offline``: ``enroll`` flips ``provisioning`` to ``online``, and
+        # ``restore`` returns a Trap to ``provisioning``. So a Trap that is
+        # ``provisioning`` (or revoked/archived) has no usable credential and
+        # must be re-enrolled.
+        needs_reenroll = (
+            existing["is_archived"]
+            or existing["status"] in {"provisioning", "revoked"}
+            or not secret_file.exists()
+        )
+        if needs_reenroll:
+            restored = _json_request(
+                opener,
+                f"{base_url}/api/v1/traps/{existing['id']}/restore",
+                method="POST",
+            )
+            _enroll_and_store(
+                opener, base_url, secret_file, restored["enrollment_token"]
+            )
+        elif not existing["enabled"]:
+            _json_request(
+                opener,
+                f"{base_url}/api/v1/traps/{existing['id']}/start",
+                method="POST",
+            )
 
 
 def main() -> None:

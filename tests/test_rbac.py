@@ -69,6 +69,7 @@ async def test_viewer_mutations_are_forbidden_and_audited(
         ("post", f"/api/v1/traps/{trap_id}/stop", None),
         ("post", f"/api/v1/traps/{trap_id}/archive", None),
         ("post", f"/api/v1/traps/{trap_id}/revoke", None),
+        ("post", f"/api/v1/traps/{trap_id}/restore", None),
         ("post", f"/api/v1/traps/{trap_id}/enrollment-token", None),
         ("delete", f"/api/v1/traps/{trap_id}", None),
     ]

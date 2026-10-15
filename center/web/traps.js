@@ -96,12 +96,15 @@ function renderTable() {
         actionButton('Revoke', 'danger trap-revoke', trap, current => revoke(current)),
         actionButton('Archive', 'quiet trap-archive', trap, current => archive(current)),
       );
-    } else if (!trap.is_archived) {
-      actions.append(
-        actionButton('Archive', 'quiet trap-archive', trap, current => archive(current)),
-      );
     } else {
-      actions.textContent = 'Archived';
+      actions.append(
+        actionButton('Restore', 'trap-restore', trap, restore),
+      );
+      if (!trap.is_archived) {
+        actions.append(
+          actionButton('Archive', 'quiet trap-archive', trap, current => archive(current)),
+        );
+      }
     }
 
     row.append(name, profile, status, lastSeen, ip, hostname, enabled, actions);
@@ -160,6 +163,22 @@ async function revoke(trap) {
 async function archive(trap) {
   if (!window.confirm(`Archive “${trap.name}”? It stops presenting services but keeps its history.`)) return;
   await act(`${api}/${trap.id}/archive`);
+}
+
+async function restore(trap) {
+  if (!window.confirm(`Restore “${trap.name}”? It becomes enrollable again and its services restart.`)) return;
+  notice.textContent = 'Restoring…';
+  notice.className = 'notice';
+  tokenLabel.textContent = '';
+  try {
+    const restored = await (await request(`${api}/${trap.id}/restore`, { method: 'POST' })).json();
+    tokenLabel.textContent = `Enrollment token: ${restored.enrollment_token}`;
+    await loadTraps();
+    notice.textContent = 'Trap restored. Re-enroll the Agent with the token above, or run `make demo`.';
+    notice.className = 'notice';
+  } catch (error) {
+    reportError(error);
+  }
 }
 
 form.addEventListener('submit', async event => {

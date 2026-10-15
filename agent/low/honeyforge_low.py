@@ -423,6 +423,7 @@ class _LowTcpService:
         connection_limit: int = 100,
         idle_timeout_seconds: float = 10,
         max_input_bytes: int = 64 * 1024,
+        response_delay_ms: int = 0,
     ) -> None:
         self.trap_id = trap_id
         self.host = host
@@ -431,6 +432,7 @@ class _LowTcpService:
         self.connection_limit = connection_limit
         self.idle_timeout_seconds = idle_timeout_seconds
         self.max_input_bytes = max_input_bytes
+        self.response_delay_seconds = max(response_delay_ms, 0) / 1000.0
         self._active_connections = 0
         self._server: asyncio.Server | None = None
         self._handlers: set[asyncio.Task[None]] = set()
@@ -704,6 +706,8 @@ class LowHttpAgent(_LowTcpService):
             + b"\r\nConnection: close\r\n\r\n"
             + body
         )
+        if self.response_delay_seconds:
+            await asyncio.sleep(self.response_delay_seconds)
         writer.write(response)
         await writer.drain()
         return len(response)
@@ -739,6 +743,8 @@ class LowMySqlAgent(_LowTcpService):
 
     async def serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, **kwargs: str) -> int:
         handshake = self._handshake()
+        if self.response_delay_seconds:
+            await asyncio.sleep(self.response_delay_seconds)
         writer.write(handshake)
         await writer.drain()
         received = await asyncio.wait_for(
@@ -762,6 +768,7 @@ class LowSshAgent:
         queue: EventQueue,
         connection_limit: int = 100,
         idle_timeout_seconds: float = 10,
+        response_delay_ms: int = 0,
     ) -> None:
         self.trap_id = trap_id
         self.host = host
@@ -770,6 +777,7 @@ class LowSshAgent:
         self.queue = queue
         self.connection_limit = connection_limit
         self.idle_timeout_seconds = idle_timeout_seconds
+        self.response_delay_seconds = max(response_delay_ms, 0) / 1000.0
         self._active_connections = 0
         self._server: asyncio.Server | None = None
         self._handlers: set[asyncio.Task[None]] = set()
@@ -858,6 +866,8 @@ class LowSshAgent:
                     payload={"banner": self.banner},
                 )
             )
+            if self.response_delay_seconds:
+                await asyncio.sleep(self.response_delay_seconds)
             writer.write(banner_bytes)
             await writer.drain()
             try:

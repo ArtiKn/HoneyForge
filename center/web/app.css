@@ -102,6 +102,13 @@ textarea { min-height: 5.5rem; resize: vertical; }
 .service-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
 .service-row { display: grid; grid-template-columns: 1fr .7fr 1.3fr 1.4fr auto; gap: .75rem; align-items: end; padding: 1rem; background: #dce4df; }
 .remove-service { min-height: 3rem; }
+.credential-row { display: grid; grid-template-columns: .8fr 1fr 1fr auto; gap: .75rem; align-items: end; padding: 1rem; background: #dce4df; }
+.remove-credential { min-height: 3rem; }
+.options { display: grid; gap: .6rem; padding: 1rem; background: #dce4df; }
+.options .field { grid-template-columns: minmax(12rem, 18rem) minmax(0, 1fr); align-items: center; gap: 1rem; }
+.check { display: flex; align-items: center; gap: .6rem; font-weight: 650; }
+.check input { width: auto; min-height: 0; }
+.hint { margin: 0; color: var(--muted); font-size: var(--small); }
 .form-actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1.5rem; }
 .notice { min-height: 1.7rem; margin: 0; font-weight: 650; }
 .notice.error { color: var(--danger); }
@@ -167,6 +174,9 @@ textarea { min-height: 5.5rem; resize: vertical; }
   .service-row .banner-field { grid-column: 1 / -1; }
   .service-row .settings-field { grid-column: 1 / -1; }
   .service-row .remove-service { grid-column: 1 / -1; justify-self: start; }
+  .credential-row { grid-template-columns: 1fr 1fr; }
+  .credential-row .remove-credential { grid-column: 1 / -1; justify-self: start; }
+  .options .field { grid-template-columns: 1fr; align-items: start; }
 }
 
 @media (prefers-reduced-motion: reduce) {

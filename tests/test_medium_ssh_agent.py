@@ -56,6 +56,118 @@ async def _wait_for_events(queue: EventQueue, count: int) -> None:
     raise AssertionError(f"expected at least {count} events")
 
 
+async def test_medium_ssh_honours_decoy_credentials(tmp_path: Path) -> None:
+    queue = EventQueue(tmp_path / "medium-decoy.sqlite3")
+    service = MediumSshService(
+        trap_id=uuid4(),
+        host="127.0.0.1",
+        port=0,
+        queue=queue,
+        decoy_credentials=[
+            {"username": "root", "password": "s3cret", "service": "ssh"}
+        ],
+    )
+    await service.start()
+    try:
+        with pytest.raises(asyncssh.PermissionDenied):
+            async with asyncssh.connect(
+                "127.0.0.1",
+                port=service.port,
+                username="root",
+                password="wrong",
+                known_hosts=None,
+            ):
+                pass
+        async with asyncssh.connect(
+            "127.0.0.1",
+            port=service.port,
+            username="root",
+            password="s3cret",
+            known_hosts=None,
+        ) as connection:
+            process = await connection.create_process()
+            assert "Welcome" in await process.stdout.readuntil("$ ")
+            process.stdin.write("exit\n")
+            assert "logout" in await process.stdout.read()
+        await _wait_for_events(queue, 4)
+    finally:
+        await service.stop()
+
+    attempts = [
+        event["payload"]
+        for event in queue.pending(limit=20)
+        if event["event_type"] == "authentication_attempt"
+    ]
+    assert [attempt["accepted"] for attempt in attempts] == [False, True]
+
+
+async def test_medium_ssh_applies_logging_settings(tmp_path: Path) -> None:
+    queue = EventQueue(tmp_path / "medium-logging.sqlite3")
+    service = MediumSshService(
+        trap_id=uuid4(),
+        host="127.0.0.1",
+        port=0,
+        queue=queue,
+        capture_credentials=False,
+        capture_commands=False,
+    )
+    await service.start()
+    try:
+        async with asyncssh.connect(
+            "127.0.0.1",
+            port=service.port,
+            username="root",
+            password="hunter2",
+            known_hosts=None,
+        ) as connection:
+            process = await connection.create_process()
+            await process.stdout.readuntil("$ ")
+            process.stdin.write("whoami\n")
+            await process.stdout.readuntil("$ ")
+        await _wait_for_events(queue, 3)
+    finally:
+        await service.stop()
+
+    events = queue.pending(limit=20)
+    attempt = next(
+        event for event in events if event["event_type"] == "authentication_attempt"
+    )
+    command = next(
+        event for event in events if event["event_type"] == "command_entered"
+    )
+    assert attempt["payload"]["password"] == "<redacted>"
+    assert attempt["payload"]["accepted"] is True
+    assert command["payload"]["command"] == "<redacted>"
+
+
+async def test_medium_ssh_applies_response_delay(tmp_path: Path) -> None:
+    queue = EventQueue(tmp_path / "medium-delay.sqlite3")
+    service = MediumSshService(
+        trap_id=uuid4(),
+        host="127.0.0.1",
+        port=0,
+        queue=queue,
+        response_delay_ms=400,
+    )
+    await service.start()
+    try:
+        loop = asyncio.get_running_loop()
+        async with asyncssh.connect(
+            "127.0.0.1",
+            port=service.port,
+            username="root",
+            password="hunter2",
+            known_hosts=None,
+        ) as connection:
+            started = loop.time()
+            process = await connection.create_process()
+            assert "Welcome" in await process.stdout.readuntil("$ ")
+            elapsed = loop.time() - started
+    finally:
+        await service.stop()
+    assert elapsed >= 0.3, elapsed
+
+
 async def test_medium_ssh_rejects_connections_above_limit(tmp_path: Path) -> None:
     queue = EventQueue(tmp_path / "medium-limit.sqlite3")
     service = MediumSshService(

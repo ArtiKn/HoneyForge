@@ -41,6 +41,12 @@ async def create_trap_profile(
         services=[service.model_dump(exclude_none=True) for service in payload.services],
         banners={},
         config={},
+        decoy_credentials=[
+            credential.model_dump(exclude_none=True)
+            for credential in payload.decoy_credentials
+        ],
+        logging=payload.logging.model_dump(),
+        masking=payload.masking.model_dump(exclude_none=True),
         version=1,
         is_archived=False,
     )
@@ -114,6 +120,12 @@ async def update_trap_profile(
             services=[
                 service.model_dump(exclude_none=True) for service in payload.services
             ],
+            decoy_credentials=[
+                credential.model_dump(exclude_none=True)
+                for credential in payload.decoy_credentials
+            ],
+            logging=payload.logging.model_dump(),
+            masking=payload.masking.model_dump(exclude_none=True),
             version=TrapProfile.version + 1,
         )
         .returning(TrapProfile)

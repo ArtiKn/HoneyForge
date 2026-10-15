@@ -207,6 +207,98 @@ async def test_medium_http_registry_never_shares_session_between_traps(
     queue.close()
 
 
+async def test_medium_http_honours_decoy_credentials(tmp_path: Path) -> None:
+    queue = EventQueue(tmp_path / "medium-http-decoy.sqlite3")
+    service = MediumHttpService(
+        trap_id=uuid4(),
+        host="127.0.0.1",
+        port=0,
+        queue=queue,
+        decoy_credentials=[
+            {"username": "admin", "password": "letmein", "service": "http"}
+        ],
+        session_timeout_seconds=60,
+    )
+    await service.start()
+    try:
+        wrong = await _login(service.port, "admin", "guess")
+        right = await _login(service.port, "admin", "letmein")
+        await _wait_for_events(queue, 2)
+    finally:
+        await service.stop()
+
+    assert wrong.startswith(b"HTTP/1.1 401")
+    assert right.startswith(b"HTTP/1.1 302 Found")
+    attempts = [
+        event["payload"]
+        for event in queue.pending(limit=20)
+        if event["event_type"] == "authentication_attempt"
+    ]
+    assert [attempt["accepted"] for attempt in attempts] == [False, True]
+
+
+async def test_medium_http_applies_logging_settings(tmp_path: Path) -> None:
+    queue = EventQueue(tmp_path / "medium-http-logging.sqlite3")
+    service = MediumHttpService(
+        trap_id=uuid4(),
+        host="127.0.0.1",
+        port=0,
+        queue=queue,
+        capture_http_bodies=False,
+        capture_credentials=False,
+        session_timeout_seconds=60,
+    )
+    await service.start()
+    try:
+        response = await _login(service.port, "root", "hunter2")
+        await _wait_for_events(queue, 2)
+    finally:
+        await service.stop()
+
+    assert response.startswith(b"HTTP/1.1 302 Found")
+    attempt = next(
+        event
+        for event in queue.pending(limit=20)
+        if event["event_type"] == "authentication_attempt"
+    )
+    assert attempt["payload"] == {"accepted": True}
+
+
+async def test_medium_http_applies_response_delay(tmp_path: Path) -> None:
+    queue = EventQueue(tmp_path / "medium-http-delay.sqlite3")
+    service = MediumHttpService(
+        trap_id=uuid4(),
+        host="127.0.0.1",
+        port=0,
+        queue=queue,
+        response_delay_ms=400,
+        session_timeout_seconds=60,
+    )
+    await service.start()
+    try:
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        response = await _request(
+            service.port, b"GET /login HTTP/1.1\r\nHost: trap\r\n\r\n"
+        )
+        elapsed = loop.time() - started
+    finally:
+        await service.stop()
+    assert response.startswith(b"HTTP/1.1 200 OK")
+    assert elapsed >= 0.3, elapsed
+
+
+async def _login(port: int, username: str, password: str) -> bytes:
+    body = f"username={username}&password={password}".encode()
+    return await _request(
+        port,
+        b"POST /login HTTP/1.1\r\nHost: trap\r\n"
+        b"Content-Type: application/x-www-form-urlencoded\r\n"
+        + f"Content-Length: {len(body)}\r\n\r\n".encode()
+        + body,
+    )
+
+
 async def _request(port: int, request: bytes) -> bytes:
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
     writer.write(request)

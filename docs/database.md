@@ -17,6 +17,9 @@ erDiagram
         jsonb services
         jsonb banners
         jsonb config
+        jsonb decoy_credentials
+        jsonb logging
+        jsonb masking
         int version
         bool is_archived
         timestamptz created_at
@@ -91,6 +94,12 @@ erDiagram
   состояние, которое подтверждает Agent через Health Report. `enabled = false`
   показывает Trap как `stopped`: Agent останавливает сервисы, но продолжает
   доставку буфера и Health Reports.
+- `TrapProfile` фиксирует все обязательные параметры профиля (FR-C1): `services`
+  (протокол, порт, баннер, `emulator_settings`), `decoy_credentials` (учётные
+  данные-приманки), `logging` (что и в каком объёме логируется) и `masking`
+  (интервалы и джиттер beacon'ов, `user_agent`). Control Center выдаёт их Agent
+  через `GET /assets/v2/config`; Agent применяет `decoy_credentials`, `logging`
+  и `emulator_settings` (`response_delay_ms`, `max_attempts`).
 - Security data хранится `SECURITY_DATA_RETENTION_DAYS` (30 дней по умолчанию),
   audit entries — `AUDIT_ENTRY_RETENTION_DAYS` (365 дней); фоновая очистка
   запускается каждые `RETENTION_SWEEP_INTERVAL_SECONDS` (сутки по умолчанию).

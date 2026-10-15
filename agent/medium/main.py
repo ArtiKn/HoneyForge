@@ -43,6 +43,7 @@ class _FakeShellSession(asyncssh.SSHServerSession[str]):
         self.channel: asyncssh.SSHServerChannel[str] | None = None
         self.input_buffer = ""
         self.idle_timer: asyncio.TimerHandle | None = None
+        self._pending_writes: set[asyncio.Task[None]] = set()
 
     def connection_made(self, channel: asyncssh.SSHServerChannel[str]) -> None:
         self.channel = channel
@@ -52,7 +53,7 @@ class _FakeShellSession(asyncssh.SSHServerSession[str]):
 
     def session_started(self) -> None:
         self._reset_idle_timer()
-        self._write("Welcome to Ubuntu 22.04 LTS (HoneyForge)\r\n$ ")
+        self._respond("Welcome to Ubuntu 22.04 LTS (HoneyForge)\r\n$ ", False)
 
     def data_received(self, data: str, datatype: asyncssh.DataType) -> None:
         self._reset_idle_timer()
@@ -66,20 +67,21 @@ class _FakeShellSession(asyncssh.SSHServerSession[str]):
             self.service.enqueue(
                 self.attack,
                 "command_entered",
-                {"command": command},
+                {"command": self.service.recorded_command(command)},
             )
             response, should_close = self.service.command_response(
                 command, self.attack.username
             )
-            self._write(response)
-            if should_close and self.channel is not None:
-                self.channel.exit(0)
-                self.channel.close()
+            self._respond(response, should_close)
+            if should_close:
                 return
 
     def connection_lost(self, exc: Exception | None) -> None:
         if self.idle_timer is not None:
             self.idle_timer.cancel()
+        for task in tuple(self._pending_writes):
+            task.cancel()
+        self._pending_writes.clear()
 
     def _reset_idle_timer(self) -> None:
         if self.idle_timer is not None:
@@ -90,6 +92,29 @@ class _FakeShellSession(asyncssh.SSHServerSession[str]):
 
     def _close_idle_session(self) -> None:
         self.service.close_connection(self.attack)
+
+    def _respond(self, response: str, should_close: bool) -> None:
+        """Delay the write when the profile emulates a slower service."""
+
+        delay = self.service.response_delay_seconds
+        if delay <= 0:
+            self._emit(response, should_close)
+            return
+        task = asyncio.get_running_loop().create_task(
+            self._delayed_emit(delay, response, should_close)
+        )
+        self._pending_writes.add(task)
+        task.add_done_callback(self._pending_writes.discard)
+
+    async def _delayed_emit(self, delay: float, response: str, should_close: bool) -> None:
+        await asyncio.sleep(delay)
+        self._emit(response, should_close)
+
+    def _emit(self, response: str, should_close: bool) -> None:
+        self._write(response)
+        if should_close and self.channel is not None:
+            self.channel.exit(0)
+            self.channel.close()
 
     def _write(self, response: str) -> None:
         if self.channel is not None:
@@ -136,14 +161,16 @@ class _FakeSshServer(asyncssh.SSHServer):
         if self.attack is None:
             return False
         self.attack.auth_attempts += 1
-        accepted = self.attack.auth_attempts <= self.service.max_attempts
+        accepted = self.service.password_accepted(
+            username, password, self.attack.auth_attempts
+        )
         self.attack.username = username[:256] or "attacker"
         self.service.enqueue(
             self.attack,
             "authentication_attempt",
             {
                 "username": username[:256] or "unknown",
-                "password": password[:1024],
+                "password": self.service.recorded_password(password),
                 "accepted": accepted,
             },
         )
@@ -170,6 +197,11 @@ class MediumSshService:
         idle_timeout_seconds: float = 30,
         max_input_bytes: int = 4096,
         max_attempts: int = 3,
+        decoy_credentials: list[dict[str, Any]] | None = None,
+        response_delay_ms: int = 0,
+        capture_credentials: bool = True,
+        capture_commands: bool = True,
+        max_payload_bytes: int = 4096,
     ) -> None:
         if min(connection_limit, max_input_bytes, max_attempts) < 1:
             raise ValueError("Medium SSH limits must be positive")
@@ -182,6 +214,11 @@ class MediumSshService:
         self.idle_timeout_seconds = idle_timeout_seconds
         self.max_input_bytes = max_input_bytes
         self.max_attempts = max_attempts
+        self.decoy_credentials = decoy_credentials or []
+        self.response_delay_seconds = max(response_delay_ms, 0) / 1000.0
+        self.capture_credentials = capture_credentials
+        self.capture_commands = capture_commands
+        self.max_payload_bytes = max(max_payload_bytes, 0)
         self._server: asyncssh.SSHAcceptor | None = None
         self._prepared_socket: socket.socket | None = None
         self._connections: set[asyncssh.SSHServerConnection] = set()
@@ -284,6 +321,37 @@ class MediumSshService:
             return responses[command], True
         return responses.get(command, "command not found\r\n$ "), False
 
+    def password_accepted(self, username: str, password: str, attempt: int) -> bool:
+        """Honor configured decoy credentials, else the legacy attempt budget."""
+
+        decoys = [
+            credential
+            for credential in self.decoy_credentials
+            if credential.get("service") in (None, "ssh")
+        ]
+        if decoys:
+            return any(
+                credential.get("username") == username
+                and credential.get("password") == password
+                for credential in decoys
+            )
+        return attempt <= self.max_attempts
+
+    def recorded_password(self, password: str) -> str:
+        if not self.capture_credentials:
+            return "<redacted>"
+        return self._truncate(password)
+
+    def recorded_command(self, command: str) -> str:
+        if not self.capture_commands:
+            return "<redacted>"
+        return self._truncate(command)
+
+    def _truncate(self, value: str) -> str:
+        if self.max_payload_bytes and len(value) > self.max_payload_bytes:
+            return value[: self.max_payload_bytes]
+        return value
+
     def enqueue(
         self,
         attack: _AttackConnection,
@@ -332,6 +400,12 @@ async def run() -> None:
             raise RuntimeError(
                 "Medium Trap Agent requires a medium-interaction Trap Profile"
             )
+        decoy_credentials = list(config.get("decoy_credentials") or [])
+        logging_settings = dict(config.get("logging") or {})
+        capture_credentials = bool(logging_settings.get("capture_credentials", True))
+        capture_commands = bool(logging_settings.get("capture_commands", True))
+        capture_http_bodies = bool(logging_settings.get("capture_http_bodies", True))
+        max_payload_bytes = int(logging_settings.get("max_payload_bytes", 4096))
         result: list[TrapService] = []
         for definition in config["services"]:
             if definition["protocol"] not in ("ssh", "http"):
@@ -344,6 +418,7 @@ async def run() -> None:
                 "host": os.getenv("LISTEN_HOST", "0.0.0.0"),
                 "port": int(definition["internal_port"]),
                 "queue": queue,
+                "response_delay_ms": int(settings.get("response_delay_ms") or 0),
             }
             if definition["protocol"] == "ssh":
                 service: TrapService = MediumSshService(
@@ -351,12 +426,20 @@ async def run() -> None:
                     banner=definition.get("banner")
                     or "OpenSSH_8.9p1 Ubuntu-3ubuntu0.10",
                     max_attempts=int(settings.get("max_attempts") or 3),
+                    decoy_credentials=decoy_credentials,
+                    capture_credentials=capture_credentials,
+                    capture_commands=capture_commands,
+                    max_payload_bytes=max_payload_bytes,
                 )
             else:
                 service = MediumHttpService(
                     **common,
                     banner=definition.get("banner") or "nginx/1.24.0",
                     session_registry=http_sessions,
+                    decoy_credentials=decoy_credentials,
+                    capture_credentials=capture_credentials,
+                    capture_http_bodies=capture_http_bodies,
+                    max_payload_bytes=max_payload_bytes,
                 )
             result.append(service)
         return result

@@ -76,6 +76,14 @@ async def test_operator_creates_a_trap_profile(profile_client) -> None:
                 "emulator_settings": {"max_attempts": 3},
             }
         ],
+        "decoy_credentials": [],
+        "logging": {
+            "capture_credentials": True,
+            "capture_commands": True,
+            "capture_http_bodies": True,
+            "max_payload_bytes": 4096,
+        },
+        "masking": {},
         "version": 1,
         "is_archived": False,
         "created_at": response.json()["created_at"],
@@ -146,7 +154,111 @@ async def test_medium_profile_configures_fake_http(profile_client) -> None:
     ]
 
 
-async def test_trap_profile_rejects_deployment_and_credential_fields(
+async def test_profile_carries_decoy_logging_and_masking_settings(profile_client) -> None:
+    response = await profile_client.post(
+        "/api/v1/trap-profiles",
+        headers={"Origin": "https://test"},
+        json={
+            "name": "Realistic SSH",
+            "interaction_level": "medium",
+            "services": [{"protocol": "ssh", "internal_port": 22}],
+            "decoy_credentials": [
+                {"username": "root", "password": "hunter2", "service": "ssh"},
+                {"username": "admin", "password": "Summer2026!"},
+            ],
+            "logging": {
+                "capture_credentials": True,
+                "capture_commands": False,
+                "capture_http_bodies": True,
+                "max_payload_bytes": 2048,
+            },
+            "masking": {
+                "beacon_interval_seconds": 300,
+                "beacon_jitter_seconds": 60,
+                "user_agent": "Mozilla/5.0 (X11; Linux x86_64)",
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["decoy_credentials"] == [
+        {"username": "root", "password": "hunter2", "service": "ssh"},
+        {"username": "admin", "password": "Summer2026!"},
+    ]
+    assert body["logging"] == {
+        "capture_credentials": True,
+        "capture_commands": False,
+        "capture_http_bodies": True,
+        "max_payload_bytes": 2048,
+    }
+    assert body["masking"] == {
+        "beacon_interval_seconds": 300,
+        "beacon_jitter_seconds": 60,
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64)",
+    }
+
+
+async def test_profile_rejects_invalid_decoy_logging_and_masking_values(
+    profile_client,
+) -> None:
+    base = {
+        "name": "Invalid settings",
+        "interaction_level": "low",
+        "services": [{"protocol": "http", "internal_port": 80}],
+    }
+    empty_decoy = await profile_client.post(
+        "/api/v1/trap-profiles",
+        headers={"Origin": "https://test"},
+        json=base | {"decoy_credentials": [{"username": "", "password": "x"}]},
+    )
+    bad_payload = await profile_client.post(
+        "/api/v1/trap-profiles",
+        headers={"Origin": "https://test"},
+        json=base | {"logging": {"max_payload_bytes": 10_000_000}},
+    )
+    unknown_masking = await profile_client.post(
+        "/api/v1/trap-profiles",
+        headers={"Origin": "https://test"},
+        json=base | {"masking": {"interval": 10}},
+    )
+
+    assert empty_decoy.status_code == 422
+    assert bad_payload.status_code == 422
+    assert unknown_masking.status_code == 422
+
+
+async def test_update_persists_decoy_logging_and_masking_settings(profile_client) -> None:
+    created = await create_profile(profile_client, "Editable settings")
+    path = f"/api/v1/trap-profiles/{created['id']}"
+
+    changed = await profile_client.put(
+        path,
+        headers={"Origin": "https://test", "If-Match": '"1"'},
+        json={
+            "name": "Editable settings",
+            "interaction_level": "medium",
+            "services": [{"protocol": "ssh", "internal_port": 22}],
+            "decoy_credentials": [{"username": "svc", "password": "decoy"}],
+            "logging": {"capture_commands": False},
+            "masking": {"beacon_interval_seconds": 120},
+        },
+    )
+
+    assert changed.status_code == 200
+    assert changed.json()["version"] == 2
+    assert changed.json()["decoy_credentials"] == [
+        {"username": "svc", "password": "decoy"}
+    ]
+    assert changed.json()["logging"]["capture_commands"] is False
+    assert changed.json()["logging"]["capture_credentials"] is True
+    assert changed.json()["masking"] == {"beacon_interval_seconds": 120}
+
+    detail = await profile_client.get(path)
+    assert detail.json() == changed.json()
+
+
+async def test_trap_profile_rejects_unmodeled_service_fields(
     profile_client,
 ) -> None:
     response = await profile_client.post(
@@ -342,10 +454,16 @@ async def test_trap_profile_ui_exposes_management_workflow() -> None:
     assert 'id="add-service"' in markup
     assert 'id="remove-profile"' in markup
     assert 'name="emulator_settings"' in markup
+    assert 'id="add-credential"' in markup
+    assert 'name="credential_username"' in markup
+    assert 'name="capture_credentials"' in markup
+    assert 'name="beacon_interval_seconds"' in markup
     assert "'If-Match'" in behavior
     assert "selected ? 'PUT' : 'POST'" in behavior
     assert "method: 'DELETE'" in behavior
     assert "status === 409" in behavior
+    assert 'decoy_credentials' in behavior
+    assert 'beacon_interval_seconds' in behavior
 
 
 async def test_trap_profile_ui_preserves_settings_and_shows_conflicts() -> None:
@@ -366,6 +484,16 @@ async def test_trap_profile_ui_preserves_settings_and_shows_conflicts() -> None:
                 "emulator_settings": {"shell": "fixed"},
             }
         ],
+        "decoy_credentials": [
+            {"username": "root", "password": "hunter2", "service": "ssh"}
+        ],
+        "logging": {
+            "capture_credentials": True,
+            "capture_commands": True,
+            "capture_http_bodies": True,
+            "max_payload_bytes": 2048,
+        },
+        "masking": {"beacon_interval_seconds": 120},
         "version": 3,
         "is_archived": False,
         "created_at": "2026-10-14T12:00:00Z",
@@ -407,6 +535,13 @@ document.querySelector('.profile-row').click();
 {
   const settings = document.querySelector('[name="emulator_settings"]');
   const loaded = JSON.parse(settings.value).shell === 'fixed';
+  const credentialLoaded =
+    document.querySelector('[name="credential_username"]').value === 'root' &&
+    document.querySelector('[name="credential_password"]').value === 'hunter2' &&
+    document.querySelector('[name="credential_service"]').value === 'ssh' &&
+    document.querySelector('[name="beacon_interval_seconds"]').value === '120' &&
+    document.querySelector('[name="max_payload_bytes"]').value === '2048';
+  document.querySelector('[name="capture_credentials"]').checked = false;
   document.querySelector('[name="name"]').value = 'Updated SSH';
   document.querySelector('#profile-form').requestSubmit();
   await waitFor(() => document.querySelector('#version-label').textContent === 'Version 4');
@@ -426,7 +561,7 @@ document.querySelector('.profile-row').click();
   document.querySelector('[name="name"]').value = 'Conflict edit';
   document.querySelector('#profile-form').requestSubmit();
   await waitFor(() => document.querySelector('#notice').textContent.includes('changed elsewhere'));
-  document.body.dataset.testResult = loaded ? 'passed' : 'failed';
+  document.body.dataset.testResult = loaded && credentialLoaded ? 'passed' : 'failed';
 }
 </script>
 """
@@ -539,3 +674,9 @@ document.querySelector('.profile-row').click();
     assert captured[0]["payload"]["services"][0]["emulator_settings"] == {
         "shell": "fixed"
     }
+    assert captured[0]["payload"]["decoy_credentials"] == [
+        {"username": "root", "password": "hunter2", "service": "ssh"}
+    ]
+    assert captured[0]["payload"]["logging"]["capture_credentials"] is False
+    assert captured[0]["payload"]["logging"]["max_payload_bytes"] == 2048
+    assert captured[0]["payload"]["masking"] == {"beacon_interval_seconds": 120}

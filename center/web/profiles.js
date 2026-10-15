@@ -2,7 +2,9 @@ const api = '/api/v1/trap-profiles';
 const form = document.querySelector('#profile-form');
 const list = document.querySelector('#profile-list');
 const services = document.querySelector('#services');
+const credentials = document.querySelector('#credentials');
 const template = document.querySelector('#service-template');
+const credentialTemplate = document.querySelector('#credential-template');
 const notice = document.querySelector('#notice');
 const removeButton = document.querySelector('#remove-profile');
 let profiles = [];
@@ -20,7 +22,47 @@ function addService(value = {}) {
   services.append(row);
 }
 
+function addCredential(value = {}) {
+  const row = credentialTemplate.content.firstElementChild.cloneNode(true);
+  row.querySelector('[name="credential_service"]').value = value.service || '';
+  row.querySelector('[name="credential_username"]').value = value.username || '';
+  row.querySelector('[name="credential_password"]').value = value.password || '';
+  row.querySelector('.remove-credential').addEventListener('click', () => row.remove());
+  credentials.append(row);
+}
+
+function collectCredentials() {
+  return [...credentials.querySelectorAll('.credential-row')].map(row => {
+    const credential = {
+      username: row.querySelector('[name="credential_username"]').value.trim(),
+      password: row.querySelector('[name="credential_password"]').value,
+    };
+    const service = row.querySelector('[name="credential_service"]').value;
+    if (service) credential.service = service;
+    return credential;
+  }).filter(credential => credential.username && credential.password);
+}
+
+function optionalNumber(name) {
+  const value = form.elements[name].value.trim();
+  return value === '' ? undefined : Number(value);
+}
+
 function payload() {
+  const decoy = collectCredentials();
+  const logging = {
+    capture_credentials: form.elements.capture_credentials.checked,
+    capture_commands: form.elements.capture_commands.checked,
+    capture_http_bodies: form.elements.capture_http_bodies.checked,
+    max_payload_bytes: Number(form.elements.max_payload_bytes.value || 0),
+  };
+  const masking = {};
+  const beaconInterval = optionalNumber('beacon_interval_seconds');
+  const beaconJitter = optionalNumber('beacon_jitter_seconds');
+  const userAgent = form.elements.user_agent.value.trim();
+  if (beaconInterval !== undefined) masking.beacon_interval_seconds = beaconInterval;
+  if (beaconJitter !== undefined) masking.beacon_jitter_seconds = beaconJitter;
+  if (userAgent) masking.user_agent = userAgent;
   return {
     name: form.elements.name.value.trim(),
     interaction_level: form.elements.interaction_level.value,
@@ -35,6 +77,9 @@ function payload() {
       service.emulator_settings = settings ? JSON.parse(settings) : {};
       return service;
     }),
+    decoy_credentials: decoy,
+    logging,
+    masking,
   };
 }
 
@@ -82,12 +127,24 @@ function selectProfile(profile) {
   form.elements.interaction_level.value = profile.interaction_level;
   services.replaceChildren();
   profile.services.forEach(addService);
+  credentials.replaceChildren();
+  (profile.decoy_credentials || []).forEach(addCredential);
+  const logging = profile.logging || {};
+  form.elements.capture_credentials.checked = logging.capture_credentials !== false;
+  form.elements.capture_commands.checked = logging.capture_commands !== false;
+  form.elements.capture_http_bodies.checked = logging.capture_http_bodies !== false;
+  form.elements.max_payload_bytes.value = logging.max_payload_bytes ?? 4096;
+  const masking = profile.masking || {};
+  form.elements.beacon_interval_seconds.value = masking.beacon_interval_seconds ?? '';
+  form.elements.beacon_jitter_seconds.value = masking.beacon_jitter_seconds ?? '';
+  form.elements.user_agent.value = masking.user_agent || '';
   document.querySelector('#editor-title').textContent = profile.name;
   document.querySelector('#version-label').textContent = `Version ${profile.version}`;
   removeButton.hidden = false;
   removeButton.disabled = profile.is_archived;
   form.querySelector('[type="submit"]').disabled = profile.is_archived;
   document.querySelector('#add-service').disabled = profile.is_archived;
+  document.querySelector('#add-credential').disabled = profile.is_archived;
   [...form.elements].forEach(control => {
     if (control !== removeButton) control.disabled = profile.is_archived;
   });
@@ -100,13 +157,16 @@ function newProfile() {
   selected = null;
   form.reset();
   services.replaceChildren();
+  credentials.replaceChildren();
   addService({ protocol: 'ssh', internal_port: 22 });
+  form.elements.max_payload_bytes.value = 4096;
   document.querySelector('#editor-title').textContent = 'New Trap Profile';
   document.querySelector('#version-label').textContent = 'Not saved';
   removeButton.hidden = true;
   removeButton.disabled = false;
   form.querySelector('[type="submit"]').disabled = false;
   document.querySelector('#add-service').disabled = false;
+  document.querySelector('#add-credential').disabled = false;
   [...form.elements].forEach(control => { control.disabled = false; });
   notice.textContent = '';
   notice.className = 'notice';
@@ -172,6 +232,7 @@ removeButton.addEventListener('click', async () => {
 
 document.querySelector('#new-profile').addEventListener('click', newProfile);
 document.querySelector('#add-service').addEventListener('click', () => addService());
+document.querySelector('#add-credential').addEventListener('click', () => addCredential());
 document.querySelector('#logout').addEventListener('click', async () => {
   await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'same-origin' });
   window.location.replace('/login.html');

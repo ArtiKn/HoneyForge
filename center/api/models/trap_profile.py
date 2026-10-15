@@ -21,6 +21,11 @@ class TrapProfile(CreatedAtMixin, Base):
     services: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
     banners: Mapped[dict[str, str]] = mapped_column(JSONB, default=dict, nullable=False)
     config: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    decoy_credentials: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, default=list, nullable=False
+    )
+    logging: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    masking: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
     version: Mapped[int] = mapped_column(default=1, nullable=False)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

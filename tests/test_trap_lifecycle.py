@@ -770,6 +770,18 @@ async def test_enrolled_agent_reads_its_assigned_trap_profile(
                 },
             }
         ],
+        "decoy_credentials": [],
+        "logging": {
+            "capture_credentials": True,
+            "capture_commands": True,
+            "capture_http_bodies": True,
+            "max_payload_bytes": 4096,
+        },
+        "masking": {
+            "beacon_interval_seconds": None,
+            "beacon_jitter_seconds": None,
+            "user_agent": None,
+        },
     }
 
 

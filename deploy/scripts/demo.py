@@ -350,9 +350,20 @@ def seed_demo(base_url: str, ca_file: Path, values: dict[str, str]) -> None:
             {"protocol": "mysql", "internal_port": 3306, "banner": "5.7.42-MySQL"},
         ]},
         "Demo Medium": {"interaction_level": "medium", "services": [
-            {"protocol": "ssh", "internal_port": 22, "banner": "OpenSSH_8.9p1"},
+            {"protocol": "ssh", "internal_port": 22, "banner": "OpenSSH_8.9p1", "emulator_settings": {"max_attempts": 5, "response_delay_ms": 150}},
             {"protocol": "http", "internal_port": 80, "banner": "nginx/1.24.0"},
-        ]},
+        ], "decoy_credentials": [
+            {"username": "svc-backup", "password": "Backup!2026"},
+            {"username": "admin", "password": "Summer2026!"},
+        ], "logging": {
+            "capture_credentials": True,
+            "capture_commands": True,
+            "capture_http_bodies": True,
+            "max_payload_bytes": 4096,
+        }, "masking": {
+            "beacon_interval_seconds": 300,
+            "beacon_jitter_seconds": 45,
+        }},
     }
     trap_profile_ids: dict[str, str] = {}
     for name, spec in trap_profile_specs.items():

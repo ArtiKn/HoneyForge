@@ -110,6 +110,34 @@ async def test_http_service_returns_static_response_and_normalizes_request(
     }
 
 
+async def test_low_http_applies_response_delay(tmp_path: Path) -> None:
+    queue = EventQueue(tmp_path / "http-delay.sqlite3")
+    agent = LowHttpAgent(
+        trap_id=uuid4(),
+        host="127.0.0.1",
+        port=0,
+        queue=queue,
+        response_delay_ms=300,
+    )
+    await agent.start()
+    try:
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        reader, writer = await asyncio.open_connection("127.0.0.1", agent.port)
+        writer.write(b"GET / HTTP/1.1\r\nHost: trap\r\n\r\n")
+        await writer.drain()
+        response = await reader.read()
+        elapsed = loop.time() - started
+        writer.close()
+        await writer.wait_closed()
+        await _wait_for_events(queue, count=3)
+    finally:
+        await agent.stop()
+
+    assert response.startswith(b"HTTP/1.1 200 OK\r\n")
+    assert elapsed >= 0.2, elapsed
+
+
 async def test_mysql_service_returns_handshake_and_enforces_input_limit(
     tmp_path: Path,
 ) -> None:

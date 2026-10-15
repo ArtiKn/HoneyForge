@@ -4,7 +4,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from center.api.schemas.trap_profile import TrapServiceDefinition
+from center.api.schemas.trap_profile import (
+    DecoyCredential,
+    TrapLoggingSettings,
+    TrapMaskingSettings,
+    TrapServiceDefinition,
+)
 
 
 class TrapCreate(BaseModel):
@@ -104,4 +109,7 @@ class AgentConfiguration(BaseModel):
     interaction_level: Literal["low", "medium"]
     enabled: bool
     services: list[TrapServiceDefinition]
+    decoy_credentials: list[DecoyCredential] = Field(default_factory=list)
+    logging: TrapLoggingSettings = Field(default_factory=TrapLoggingSettings)
+    masking: TrapMaskingSettings = Field(default_factory=TrapMaskingSettings)
 

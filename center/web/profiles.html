@@ -52,6 +52,31 @@
           </div>
           <div id="services"></div>
         </div>
+        <div class="services reveal">
+          <div class="service-head">
+            <span class="service-title">Decoy credentials</span>
+            <button class="button secondary" id="add-credential" type="button">Add credential</button>
+          </div>
+          <p class="hint">Plausible logins the decoy services accept. Leave empty to accept any credentials within the attempt limit.</p>
+          <div id="credentials"></div>
+        </div>
+        <div class="services reveal">
+          <div class="service-head"><span class="service-title">Logging</span></div>
+          <div class="options">
+            <label class="check"><input type="checkbox" name="capture_credentials" checked /> Record submitted credentials</label>
+            <label class="check"><input type="checkbox" name="capture_commands" checked /> Record shell commands</label>
+            <label class="check"><input type="checkbox" name="capture_http_bodies" checked /> Record HTTP request bodies</label>
+            <label class="field"><span>Max payload bytes</span><input type="number" name="max_payload_bytes" min="0" max="1048576" value="4096" /></label>
+          </div>
+        </div>
+        <div class="services reveal">
+          <div class="service-head"><span class="service-title">Masking</span></div>
+          <div class="options">
+            <label class="field"><span>Beacon interval (seconds)</span><input type="number" name="beacon_interval_seconds" min="1" max="86400" /></label>
+            <label class="field"><span>Beacon jitter (seconds)</span><input type="number" name="beacon_jitter_seconds" min="0" max="86400" /></label>
+            <label class="field"><span>User agent</span><input type="text" name="user_agent" maxlength="256" autocomplete="off" /></label>
+          </div>
+        </div>
         <p class="notice reveal" id="notice" role="status"></p>
         <div class="form-actions reveal">
           <button class="button" type="submit">Save Trap Profile</button>
@@ -67,6 +92,14 @@
       <label class="field banner-field"><span>Banner (optional)</span><input name="banner" maxlength="1024" autocomplete="off" /></label>
       <label class="field settings-field"><span>Emulator settings (JSON)</span><textarea name="emulator_settings" spellcheck="false">{}</textarea></label>
       <button class="button quiet remove-service" type="button">Remove</button>
+    </div>
+  </template>
+  <template id="credential-template">
+    <div class="credential-row">
+      <label class="field"><span>Service</span><select name="credential_service"><option value="">any</option><option>ssh</option><option>http</option><option>mysql</option></select></label>
+      <label class="field"><span>Username</span><input name="credential_username" maxlength="256" autocomplete="off" /></label>
+      <label class="field"><span>Password</span><input name="credential_password" type="password" maxlength="1024" autocomplete="new-password" /></label>
+      <button class="button quiet remove-credential" type="button">Remove</button>
     </div>
   </template>
   <script type="module" src="/profiles.js"></script>

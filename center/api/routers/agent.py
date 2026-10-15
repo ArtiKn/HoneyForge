@@ -35,6 +35,9 @@ async def configuration(
         interaction_level=profile.interaction_level,
         enabled=trap.enabled,
         services=profile.services,
+        decoy_credentials=profile.decoy_credentials,
+        logging=profile.logging,
+        masking=profile.masking,
     )
 
 

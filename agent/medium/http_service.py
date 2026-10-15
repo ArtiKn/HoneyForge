@@ -74,6 +74,11 @@ class MediumHttpService:
         max_input_bytes: int = 64 * 1024,
         session_timeout_seconds: float = 15 * 60,
         session_registry: HttpAttackSessionRegistry | None = None,
+        decoy_credentials: list[dict[str, Any]] | None = None,
+        response_delay_ms: int = 0,
+        capture_credentials: bool = True,
+        capture_http_bodies: bool = True,
+        max_payload_bytes: int = 4096,
     ) -> None:
         if min(
             connection_limit,
@@ -91,6 +96,11 @@ class MediumHttpService:
         self.idle_timeout_seconds = idle_timeout_seconds
         self.max_input_bytes = max_input_bytes
         self.session_timeout_seconds = session_timeout_seconds
+        self.decoy_credentials = decoy_credentials or []
+        self.response_delay_seconds = max(response_delay_ms, 0) / 1000.0
+        self.capture_credentials = capture_credentials
+        self.capture_http_bodies = capture_http_bodies
+        self.max_payload_bytes = max(max_payload_bytes, 0)
         self._server: asyncio.Server | None = None
         self._active_connections = 0
         self._handlers: set[asyncio.Task[None]] = set()
@@ -193,6 +203,8 @@ class MediumHttpService:
                 method, target, headers, body, attack_session_id, source_ip, source_port
             )
             response = self._response(status, response_headers, content)
+            if self.response_delay_seconds:
+                await asyncio.sleep(self.response_delay_seconds)
             writer.write(response)
             await writer.drain()
             bytes_sent = len(response)
@@ -261,17 +273,19 @@ class MediumHttpService:
             fields = parse_qs(body.decode("utf-8", errors="replace"), keep_blank_values=True)
             username = fields.get("username", [""])[0][:256]
             password = fields.get("password", [""])[0][:1024]
-            accepted = bool(username and password)
+            accepted = self._login_accepted(username, password)
+            payload: dict[str, Any] = {"accepted": accepted}
+            if self.capture_http_bodies:
+                payload["username"] = username or "unknown"
+                payload["password"] = (
+                    password if self.capture_credentials else "<redacted>"
+                )
             self._enqueue(
                 attack_session_id,
                 "authentication_attempt",
                 source_ip,
                 source_port,
-                {
-                    "username": username or "unknown",
-                    "password": password,
-                    "accepted": accepted,
-                },
+                payload,
             )
             if accepted:
                 fake_token = token_urlsafe(24)
@@ -296,6 +310,22 @@ class MediumHttpService:
                 return "302 Found", {"Location": "/login"}, ""
             return "200 OK", {}, self._admin_page()
         return "404 Not Found", {}, self._page("Not found", "The requested page was not found.")
+
+    def _login_accepted(self, username: str, password: str) -> bool:
+        """Honor configured decoy credentials, else accept any non-empty pair."""
+
+        decoys = [
+            credential
+            for credential in self.decoy_credentials
+            if credential.get("service") in (None, "http")
+        ]
+        if decoys:
+            return any(
+                credential.get("username") == username
+                and credential.get("password") == password
+                for credential in decoys
+            )
+        return bool(username and password)
 
     def _attack_session(self, source_ip: str, source_port: int) -> str:
         return self._session_registry.get(

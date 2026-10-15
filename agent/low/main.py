@@ -61,10 +61,12 @@ async def run() -> None:
         }
         for definition in config["services"]:
             protocol = definition["protocol"]
+            emulator = definition.get("emulator_settings", {})
             settings = {
                 **common,
                 "port": int(definition["internal_port"]),
                 "banner": definition.get("banner"),
+                "response_delay_ms": int(emulator.get("response_delay_ms") or 0),
             }
             if protocol == "ssh":
                 service: TrapService = LowSshAgent(

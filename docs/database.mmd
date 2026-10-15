@@ -5,7 +5,7 @@ erDiagram
     ATTACK_SESSIONS ||--o{ SECURITY_EVENTS : groups
     OPERATORS ||--o{ AUDIT_ENTRIES : records
 
-    TRAP_PROFILES { uuid id PK text name UK text interaction_level jsonb services jsonb banners jsonb config int version bool is_archived }
+    TRAP_PROFILES { uuid id PK text name UK text interaction_level jsonb services jsonb banners jsonb config jsonb decoy_credentials jsonb logging jsonb masking int version bool is_archived }
     TRAPS { uuid id PK text name uuid trap_profile_id FK text status bool is_archived timestamptz last_seen_at }
     ATTACK_SESSIONS { uuid id PK uuid trap_id FK inet source_ip timestamptz started_at timestamptz ended_at text protocol jsonb metadata }
     SECURITY_EVENTS { uuid id PK int schema_version uuid trap_id FK uuid attack_session_id FK text event_type timestamptz observed_at timestamptz received_at inet source_ip int target_port jsonb payload }

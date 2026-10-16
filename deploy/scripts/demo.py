@@ -64,6 +64,13 @@ def ensure_demo_env(path: Path = ENV_FILE) -> dict[str, str]:
         values["CENTER_URL"] = f"https://localhost:{values['CENTER_HTTPS_PORT']}"
     values.setdefault("OPERATOR_USERNAME", "operator")
     values.setdefault("OPERATOR_ROLE", "admin")
+    # A read-only Operator is what makes the role split demonstrable: the API
+    # enforces it, but there is no self-service signup for it.
+    values.setdefault("OPERATOR_VIEWER_USERNAME", "viewer")
+    if not values.get("OPERATOR_VIEWER_PASSWORD") or len(
+        values["OPERATOR_VIEWER_PASSWORD"]
+    ) < 12:
+        values["OPERATOR_VIEWER_PASSWORD"] = secrets.token_urlsafe(16)
     if values.get("LOW_TRAP_SECRET_FILE", "").startswith("./secrets/"):
         values["LOW_TRAP_SECRET_FILE"] = values["LOW_TRAP_SECRET_FILE"].replace(
             "./secrets/", "../secrets/", 1
@@ -492,15 +499,96 @@ def seed_demo(base_url: str, ca_file: Path, values: dict[str, str]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("env", "seed", "attack", "smoke"))
+    parser.add_argument(
+        "command",
+        choices=(
+            "env",
+            "seed",
+            "attack",
+            "smoke",
+            "status",
+            "export",
+            "lifecycle",
+            "rbac",
+            "masking",
+            "payload",
+            "tour",
+        ),
+    )
     parser.add_argument(
         "--expected-event-id",
         action="append",
         default=[],
         help="Security Event UUID that must have drained from the Agent and reached REST",
     )
+    parser.add_argument("--trap-id", default="", help="фильтр выгрузки: ловушка (UUID)")
+    parser.add_argument("--event-type", default="", help="фильтр выгрузки: тип события")
+    parser.add_argument("--source-ip", default="", help="фильтр выгрузки: IP источника")
+    parser.add_argument("--limit", type=int, default=0, help="фильтр выгрузки: строк максимум")
+    parser.add_argument(
+        "--output", type=Path, default=None, help="куда сохранить CSV (по умолчанию не сохранять)"
+    )
+    parser.add_argument(
+        "--trap-name", default="Demo Low", help="ловушка для сценария жизненного цикла"
+    )
     args = parser.parse_args()
     values = ensure_demo_env()
+    if args.command == "masking":
+        # Works without a running center: it inspects the shipped artifact only.
+        import demo_features
+
+        print(
+            json.dumps(demo_features.demo_masking(ROOT / "deploy/nginx/certs/ca.crt"), indent=2)
+        )
+        return
+    if args.command in {
+        "status",
+        "export",
+        "lifecycle",
+        "rbac",
+        "payload",
+        "tour",
+    }:
+        import demo_features
+
+        base_url = f"https://localhost:{values['CENTER_HTTPS_PORT']}"
+        ca_file = ROOT / "deploy/nginx/certs/ca.crt"
+        wait_ready(base_url, ca_file)
+        if args.command == "status":
+            print(json.dumps(demo_features.demo_status(base_url, ca_file, values), indent=2))
+        elif args.command == "export":
+            filters = {
+                "trap_id": args.trap_id,
+                "event_type": args.event_type,
+                "source_ip": args.source_ip,
+                "limit": args.limit,
+            }
+            print(
+                json.dumps(
+                    demo_features.demo_export(
+                        base_url, ca_file, values, filters=filters, output=args.output
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.command == "lifecycle":
+            print(
+                json.dumps(
+                    demo_features.demo_lifecycle(
+                        base_url, ca_file, values, trap_name=args.trap_name
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.command == "rbac":
+            print(json.dumps(demo_features.demo_rbac(base_url, ca_file, values), indent=2))
+        elif args.command == "masking":
+            print(json.dumps(demo_features.demo_masking(ca_file), indent=2))
+        elif args.command == "payload":
+            print(json.dumps(demo_features.demo_payload(base_url, ca_file, values), indent=2))
+        else:
+            demo_features.demo_tour(base_url, ca_file, values)
+        return
     if args.command == "env":
         return
     if args.command == "seed":

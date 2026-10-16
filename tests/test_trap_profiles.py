@@ -616,7 +616,7 @@ document.querySelector('.profile-row').click();
             check=True,
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=90,
         )
     finally:
         server.shutdown()

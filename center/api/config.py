@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     operator_role: Literal["admin", "viewer"] = Field(
         default="admin", validation_alias="OPERATOR_ROLE"
     )
+    operator_viewer_username: str | None = Field(
+        default=None, validation_alias="OPERATOR_VIEWER_USERNAME"
+    )
+    operator_viewer_password: str | None = Field(
+        default=None, validation_alias="OPERATOR_VIEWER_PASSWORD"
+    )
     enrollment_token_minutes: int = Field(
         default=10, validation_alias="ENROLLMENT_TOKEN_MINUTES"
     )
@@ -83,5 +89,16 @@ def validate_deployment_secrets(settings: Settings) -> None:
     if settings.operator_password in placeholders or len(settings.operator_password) < 12:
         raise RuntimeError(
             "OPERATOR_PASSWORD must be a deployment-provided value of at least 12 characters"
+        )
+    viewer_password = settings.operator_viewer_password
+    if (settings.operator_viewer_username or viewer_password) and (
+        not settings.operator_viewer_username
+        or not viewer_password
+        or viewer_password in placeholders
+        or len(viewer_password) < 12
+    ):
+        raise RuntimeError(
+            "OPERATOR_VIEWER_USERNAME and OPERATOR_VIEWER_PASSWORD must both be "
+            "set to a deployment-provided password of at least 12 characters"
         )
 

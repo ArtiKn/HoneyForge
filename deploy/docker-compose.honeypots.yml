@@ -49,8 +49,8 @@ services:
       LISTEN_HOST: 172.31.0.11
       TELEMETRY_PATH: ${TELEMETRY_PATH:-/assets/v2/init}
       PROCESS_MASK_NAME: ${PROCESS_MASK_NAME:-syslog-relay}
-      BEACON_INTERVAL_SECONDS: ${BEACON_INTERVAL_SECONDS:-60}
-      BEACON_JITTER_SECONDS: ${BEACON_JITTER_SECONDS:-30}
+      # Beacon cadence is not an environment setting: the Agent reads
+      # beacon_interval_seconds / beacon_jitter_seconds from its Trap Profile.
     secrets:
       - source: relay_a_key
         target: relay.key

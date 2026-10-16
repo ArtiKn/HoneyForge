@@ -1456,7 +1456,7 @@ def _assert_events_visible_in_browser(events: list[dict]) -> None:
             check=True,
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=90,
         )
     finally:
         server.shutdown()

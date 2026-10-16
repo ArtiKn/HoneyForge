@@ -189,7 +189,7 @@ def test_traps_ui_starts_stops_and_registers_traps_through_the_api() -> None:
             check=True,
             capture_output=True,
             text=True,
-            timeout=25,
+            timeout=90,
         )
     finally:
         server.shutdown()

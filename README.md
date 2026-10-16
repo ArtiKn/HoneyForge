@@ -60,8 +60,6 @@ healthcheck — `GET /health`, readiness — `GET /ready`, endpoint телеме
 
 ```bash
 make demo
-make demo-attack
-make demo-smoke
 ```
 
 Она создаёт отсутствующую конфигурацию и CA, собирает образы, применяет
@@ -69,6 +67,34 @@ migrations, seed'ит Trap Profiles и Traps, а затем запускает C
 Существующие `.env`, сертификаты, PostgreSQL volume и Trap credentials не
 перезаписываются. Подробный acceptance gate находится в
 [`docs/acceptance_report.md`](docs/acceptance_report.md).
+
+### Демонстрация возможностей
+
+После `make demo` каждую возможность можно показать отдельной командой
+(полный список — `make help`):
+
+| Команда | Что показывает |
+|---|---|
+| `make demo-tour` | Обход всех сценариев ниже по порядку |
+| `make demo-status` | Парк ловушек: статусы, профили, последнее событие |
+| `make demo-attack` | Атаки на SSH, HTTP, MySQL и UDP ловушки |
+| `make demo-payload` | Загрузка payload'а и его захват с sha256 |
+| `make demo-export` | Выгрузка IoC в CSV (`EVENT_TYPE=`, `SOURCE_IP=`, `TRAP_ID=`, `EXPORT_LIMIT=`) |
+| `make demo-lifecycle` | Стоп → старт → отзыв → восстановление ловушки и её само-восстановление |
+| `make demo-rbac` | 401 без входа и 403 для read-only оператора |
+| `make demo-masking` | Сборка артефакта агента и проверка, что он ничего не выдаёт |
+| `make demo-trap-host` | Что видит атакующий с root на хосте ловушки |
+| `make demo-smoke` | Доставка событий при обрыве связи (буфер + досылка) |
+| `make demo-logs` | Логи центра и ловушек одновременно |
+
+Read-only оператор для `make demo-rbac` заводится автоматически при `make demo`:
+`OPERATOR_VIEWER_USERNAME` / `OPERATOR_VIEWER_PASSWORD` в `.env`. Без них центр
+работает с единственным администратором.
+
+### Тесты
+
+`make test` запускает набор локально (PostgreSQL-тесты пропускаются).
+`make test-db` поднимает одноразовый PostgreSQL и прогоняет всё без пропусков.
 
 Локальная CA и серверный сертификат создаются командой `make certs`. Проверка
 сертификата Agent'ами обязательна; режима отключения TLS verification нет.

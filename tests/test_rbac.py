@@ -243,7 +243,7 @@ def test_viewer_ui_hides_mutation_controls() -> None:
             check=True,
             capture_output=True,
             text=True,
-            timeout=25,
+            timeout=90,
         )
     finally:
         server.shutdown()

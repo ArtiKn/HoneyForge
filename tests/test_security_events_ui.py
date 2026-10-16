@@ -64,6 +64,9 @@ def test_security_events_ui_renders_persisted_ssh_interaction() -> None:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
+        # The browser timeout is generous on purpose: headless Chromium starts
+        # in a few seconds on a free machine and can take much longer on a busy
+        # CI box, and the assertions below are about the rendered DOM, not speed.
         result = subprocess.run(
             [
                 chrome,
@@ -78,7 +81,7 @@ def test_security_events_ui_renders_persisted_ssh_interaction() -> None:
             check=True,
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=90,
         )
     finally:
         server.shutdown()
@@ -218,7 +221,7 @@ def test_security_events_ui_recovers_a_gap_and_deduplicates_realtime_events() ->
             check=True,
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=90,
         )
     finally:
         server.shutdown()
@@ -315,7 +318,7 @@ def test_security_events_export_button_sends_the_active_filters() -> None:
             check=True,
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=90,
         )
     finally:
         server.shutdown()

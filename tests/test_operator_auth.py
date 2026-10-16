@@ -141,6 +141,58 @@ async def test_seeded_operator_role_comes_from_settings(
     }
 
 
+async def test_optional_read_only_operator_is_seeded_from_settings(
+    migrated_database_url,
+) -> None:
+    application = create_app(
+        build_settings(
+            migrated_database_url,
+            operator_viewer_username="auditor",
+            operator_viewer_password="auditor-password",
+        )
+    )
+    transport = httpx.ASGITransport(app=application)
+    async with application.router.lifespan_context(application):
+        async with httpx.AsyncClient(
+            transport=transport, base_url="https://test"
+        ) as client:
+            login = await client.post(
+                "/api/v1/auth/login",
+                headers={"Origin": "https://test"},
+                json={"username": "auditor", "password": "auditor-password"},
+            )
+            identity = await client.get("/api/v1/auth/me")
+            mutation = await client.post(
+                "/api/v1/trap-profiles",
+                headers={"Origin": "https://test"},
+                json={
+                    "name": "auditor-should-not-create",
+                    "interaction_level": "low",
+                    "services": [{"protocol": "ssh", "internal_port": 22}],
+                },
+            )
+    assert login.status_code == 204
+    assert identity.json() == {"username": "auditor", "role": "viewer"}
+    assert mutation.status_code == 403
+
+
+async def test_half_configured_viewer_operator_is_refused() -> None:
+    from center.api.config import validate_deployment_secrets
+
+    settings = build_settings(
+        "postgresql+asyncpg://u:p@localhost/db", operator_viewer_username="auditor"
+    )
+
+    with pytest.raises(RuntimeError, match="OPERATOR_VIEWER"):
+        validate_deployment_secrets(settings)
+
+    # Leaving both unset keeps the center a single-Operator deployment.
+    assert validate_deployment_secrets(
+        build_settings("postgresql+asyncpg://u:p@localhost/db")
+    ) is None
+    assert Settings(operator_viewer_username=None).operator_viewer_username is None
+
+
 async def test_health_and_readiness_have_distinct_meanings(auth_client) -> None:
     assert (await auth_client.get("/health")).json() == {"status": "ok"}
     assert (await auth_client.get("/ready")).json() == {"status": "ready"}

@@ -55,6 +55,10 @@ def build_settings(database_url: str, **overrides: object) -> Settings:
         "operator_username": TEST_OPERATOR_USERNAME,
         "operator_password": TEST_OPERATOR_PASSWORD,
         "operator_role": TEST_OPERATOR_ROLE,
+        # Settings also reads the repository .env, so these are pinned to keep a
+        # developer's demo configuration out of the tests.
+        "operator_viewer_username": None,
+        "operator_viewer_password": None,
         "cors_origins": [TEST_ORIGIN],
     }
     values.update(overrides)

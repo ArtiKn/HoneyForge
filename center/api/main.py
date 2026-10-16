@@ -51,6 +51,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app_settings.operator_password,
             app_settings.operator_role,
         )
+        if (
+            app_settings.operator_viewer_username
+            and app_settings.operator_viewer_password
+        ):
+            await seed_operator(
+                database.session_factory,
+                app_settings.operator_viewer_username,
+                app_settings.operator_viewer_password,
+                "viewer",
+            )
         await event_relay.start()
         health_monitor = asyncio.create_task(
             monitor_offline_traps(

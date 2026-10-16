@@ -28,3 +28,6 @@ deploy/nginx/certs/*.crt
 deploy/nginx/certs/*.key
 deploy/nginx/certs/*.pem
 deploy/nginx/certs/*.srl
+
+# Demo artifacts (make demo-export)
+artifacts/

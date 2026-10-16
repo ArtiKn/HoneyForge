@@ -2,7 +2,8 @@
 
 > Живой сценарий защиты: **атака → событие в центре**.
 
-Три сценария — от простого к эффектному. Первые два **Must** для защиты, третий — Bonus.
+Пять сценариев: четыре реализованы и выполняются командами `make`, пятый помечен как
+нереализованный — он показывает, что команда честно обозначает границы.
 
 ## Быстрый запуск
 
@@ -105,24 +106,36 @@ make demo-tour   # обойти все сценарии по очереди с �
 
 ```mermaid
 sequenceDiagram
-    participant A as Attacker
-    participant H as Honeypot (agent)
-    participant B as SQLite buffer
-    participant N as Nginx masking
-    participant API as FastAPI
-    participant DB as Postgres
-    participant WS as WS Manager
-    participant UI as Dashboard
+    participant A as Атакующий
+    participant H as Ловушка (агент)
+    participant B as Локальная очередь
+    participant N as Nginx (assets.cdn-static.example)
+    participant API as Control API
+    participant DB as PostgreSQL
+    participant WS as WS / pg_listener
+    participant UI as Интерфейс оператора
 
-    A->>H: nmap -sV / hydra / exploit
-    H->>H: emit event(schema)
-    H->>B: append to buffer
-    Note over B: beacon = masking.beacon_interval_seconds ± jitter (демо 5±2с)
-    B->>N: POST /assets/v2/init (TLS)
-    N->>API: proxy_pass → /api/telemetry
-    API->>DB: INSERT events
-    DB-->>API: NOTIFY events_new
-    API->>WS: publish
-    WS-->>UI: ws frame {event}
-    UI-->>A: (косвенно) видит оператор
+    A->>H: nmap -sV / hydra / HTTP-запрос
+    H->>H: формирует Security Event
+    H->>B: складывает в очередь
+    Note over B: beacon = masking.beacon_interval_seconds ± jitter (демо 5±2 с), размер батча варьируется
+    B->>N: POST /assets/v2/init (TLS, application/javascript)
+    N->>API: proxy_pass → /assets/v2/
+    API->>DB: INSERT security_events + attack_sessions
+    DB-->>API: NOTIFY security_events (только UUID)
+    API->>WS: публикация UUID
+    WS-->>UI: WebSocket /ws с полным событием
+    UI-->>A: косвенно — событие видно оператору
 ```
+
+## Дополнительно: устойчивость к обрыву
+
+```bash
+make demo-smoke
+```
+
+Сценарий останавливает центр, вызывает атаку, убеждается, что очередь агента
+выросла, поднимает центр обратно и проверяет, что именно эти UUID ушли в REST, а
+затем прогоняет catch-up, видимость в интерфейсе и живую доставку по WebSocket.
+Итог — JSON с полями `buffered_delivery`, `rest_catch_up`, `operator_ui`,
+`websocket`.

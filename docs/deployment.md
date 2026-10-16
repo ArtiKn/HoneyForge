@@ -13,16 +13,41 @@ make certs
 
 Скрипт создаёт `deploy/nginx/certs/ca.crt` и подписанный им server certificate
 для `localhost`, `assets.cdn-static.example` и `127.0.0.1`. CA certificate
-монтируется Agent'ам read-only. CA private key никогда не монтируется в
-контейнеры. Повторный запуск сохраняет существующие ключи; намеренная ротация:
+монтируется Agent'ам read-only, поэтому его subject нейтрален
+(`/CN=Local Demo CA`): атакующий с root на хосте ловушки прочитает этот файл.
+CA private key никогда не монтируется в контейнеры. Повторный запуск сохраняет
+существующие ключи; намеренная ротация:
 
 ```bash
 bash deploy/scripts/gen_certs.sh --force
 ```
 
+Ротация CA требует пересоздания агентов: после нового `--force` выполните
+`make demo` (или перезапустите контейнеры ловушек), иначе агенты перестанут
+проходить проверку сертификата.
+
 TLS verification нельзя отключить: без `CENTER_CA_FILE` Agent использует
 системное public-CA trust store, а с ним — указанный CA bundle. В обоих случаях
 проверяются цепочка и hostname.
+
+## Учётные записи операторов
+
+`make env` (а внутри `make demo`) генерирует `OPERATOR_PASSWORD`, а также
+опционального read-only оператора:
+
+```dotenv
+OPERATOR_USERNAME=operator
+OPERATOR_PASSWORD=…
+OPERATOR_ROLE=admin
+OPERATOR_VIEWER_USERNAME=viewer
+OPERATOR_VIEWER_PASSWORD=…
+```
+
+Центр заводит обоих при старте. Роль `viewer` умеет читать всё, но любая
+изменяющая операция возвращает `403` и попадает в `audit_entries` как
+`operator.access.denied`. Если viewer-пара не задана, центр работает с одним
+администратором — это штатный режим. Половина заданных переменных (логин без
+пароля или наоборот) приводит к отказу старта с внятной ошибкой.
 
 ## Сертификаты оператора и public CA
 
@@ -135,6 +160,24 @@ docker run --rm --user 0 -v honeyforge-honeypots_medium_agent_data:/from:ro -v r
 `RELAY_B_DATA_VOLUME`; они сохранят старые имена до отдельного переноса.
 Не запускайте старый и новый контейнер одновременно на одной SQLite-очереди.
 
+## Параметры агента
+
+Помимо адреса центра и файлов ключа, агент читает:
+
+| Переменная | По умолчанию | Смысл |
+|---|---|---|
+| `DELIVERY_INTERVAL_SECONDS` | `1` | Интервал доставки, если в профиле не задан `masking.beacon_interval_seconds` |
+| `HEALTH_INTERVAL_SECONDS` | `30` | Период heartbeat'ов |
+| `PROFILE_CHECK_INTERVAL_SECONDS` | `30` | Как часто агент забирает конфигурацию |
+| `EVENT_QUEUE_MAX_EVENTS` / `EVENT_QUEUE_MAX_BYTES` | `100000` / `256 МиБ` | Пределы локальной очереди; переполнение уходит в карантин и отчёт о потерях |
+| `PROCESS_MASK_NAME` | `syslog-relay` | Нейтральное имя процесса; значение с маркером игнорируется |
+| `AGENT_VERSION` | `0.1.0` | Отчёт в Health Report |
+
+**Каденция beacon'а не настраивается через окружение** — агент берёт
+`masking.beacon_interval_seconds` и `masking.beacon_jitter_seconds` из профиля
+ловушки; переменные `BEACON_*` в старых установках игнорируются и удалены из
+манифестов.
+
 ## Запуск
 
 ### Полный локальный demo
@@ -142,14 +185,15 @@ docker run --rm --user 0 -v honeyforge-honeypots_medium_agent_data:/from:ro -v r
 На Linux x86-64 или arm64 с Docker Engine и Compose v2:
 
 ```bash
-make demo
-make demo-attack
-make demo-smoke
+make demo          # центр + ловушки, идемпотентно
+make demo-tour     # обход всех возможностей на живом стенде
+make demo-smoke    # доказательство: события переживают обрыв связи
 ```
 
 Внешние порты demo: Control Center `8443`; Low SSH/HTTP/MySQL `2222`, `8080`,
-`33060`, UDP `9999/udp`; Medium SSH/HTTP/MySQL `2223`, `8081`, `33061`. `make demo` безопасен для повторного
-запуска и не удаляет PostgreSQL volume.
+`33060`, UDP `9999/udp`; Medium SSH/HTTP/MySQL `2223`, `8081`, `33061`.
+`make demo` безопасен для повторного запуска и не удаляет PostgreSQL volume.
+Полный список команд — `make help` и [`README.md`](../README.md).
 
 На Control Center:
 
@@ -179,6 +223,26 @@ docker compose --env-file .env -f deploy/docker-compose.honeypots.yml up -d --bu
 Сторонний CDN не нужен: внешний `/assets/v2/*` завершается на Nginx и внутренне
 proxy-передаётся FastAPI.
 
+### Проверка перед сдачей
+
+```bash
+make honeypots-config              # манифест ловушок + demo-overlay валиден
+make honeypots-distributed-config  # разнесённая топология валидна
+make demo-status                   # ловушки в статусе online
+make demo-masking                  # в артефакте агента нет слов про honeypot
+make test-db                       # полный набор тестов против одноразовой БД
+```
+
+## Тесты
+
+```bash
+make test      # быстрый прогон без БД: PostgreSQL-тесты пропускаются
+make test-db   # одноразовый postgres:16, полный набор, контейнер удаляется сам
+```
+
+`make test-db` занимает порт 55432; если он занят, команда подскажет конфликтующий
+контейнер и примет другой порт: `make test-db TEST_DB_PORT=55433`.
+
 ## Одинаковая smoke-проверка обеих топологий
 
 После enrollment выполните на машине с Python 3:
@@ -187,7 +251,7 @@ proxy-передаётся FastAPI.
 python3 deploy/scripts/smoke_deployment.py \
   --center-url https://assets.cdn-static.example \
   --ca-file deploy/nginx/certs/ca.crt \
-  --trap-secret-file deploy/secrets/low_trap_secret
+  --trap-secret-file secrets/low_trap_secret
 ```
 
 Probe проверяет `/ready`, затем отправляет один нормализованный Security Event

@@ -1,76 +1,100 @@
+%% HoneyForge — схема архитектуры (актуально для текущего кода)
+%% Поток слева направо: атакующий → ловушка → канал → центр → оператор.
+%% Сети указаны внутри своих контуров; что не реализовано — отдельным блоком внизу.
+
 flowchart LR
-    subgraph ATTACKER["🌍 Атакующий (Internet)"]
-        A1[Сканер портов]
-        A2[SSH-брутфорс]
-        A3[Веб-эксплойт]
-    end
+    ATT["🌍 Атакующий<br/>сканеры · брутфорс · веб-эксплойты"]
 
-    subgraph DMZ["🔥 DMZ — парк ловушек"]
+    subgraph DMZ["🔥 Контур ловушек (DMZ)"]
         direction TB
-        subgraph HP_LOW["Low-interaction honeypot"]
-            L1[TCP listener + banner]
-            L2[HTTP fake]
-            L3[SSH banner]
+
+        subgraph LOW["Ловушка Low"]
+            direction TB
+            L_SVC["SSH 22 · HTTP 80 · MySQL 3306 · UDP 9999<br/>баннеры и простые ответы"]
+            L_Q[("Локальная очередь<br/>SQLite + досылка")]
+            L_SVC --> L_Q
         end
-        subgraph HP_MED["Medium-interaction honeypot"]
-            M1[Fake SSH]
-            M2[Fake HTTP admin]
-            M3[Fake FS / shell]
+
+        subgraph MED["Ловушка Medium"]
+            direction TB
+            M_SSH["Fake SSH<br/>логин · пароль · команды · cwd"]
+            M_HTTP["Fake HTTP админка<br/>формы · сессии · тела"]
+            M_DB["Fake-БД<br/>разбор SQL · auth challenge"]
+            M_FS[("Fake-FS<br/>passwd · os-release · логи")]
+            M_SSH --> M_FS
         end
-        AG_COMMON["agent/common<br/>buffer · client · channel"]
-        MASK["Nginx masking<br/>/assets/v2/* → /api/telemetry"]
-        TOK["Honeytokens (bonus)"]
+
+        AGENT["<b>Агент</b><br/>клиент канала · очередь · маскировка процесса<br/>упаковка в нейтральный relay.pyz"]
+
+        L_Q --> AGENT
+        M_SSH --> AGENT
+        M_HTTP --> AGENT
+        M_DB --> AGENT
+
+        NET_DMZ["<i>Сети: relay_egress_net 172.29.0.0/24 — только исходящий TLS;<br/>relay_service_net 172.31.0.0/24 (internal) — эмулируемые порты, без внешнего маршрута</i>"]
     end
 
-    subgraph CENTER["🛡 Control Plane — изолированный сервер"]
+    subgraph CENTER["🛡 Контур центра (Control Plane)"]
         direction TB
-        NGX["Nginx<br/>TLS + reverse-proxy"]
-        API["FastAPI<br/>routers · services · security"]
-        COLL["Collector<br/>ingest · normalize · geoip"]
-        WS["WS Manager + pg_listener"]
-        ORCH["Orchestrator (bonus)"]
-        WEB["Web UI<br/>dashboard · events · profiles"]
 
-        subgraph DB["PostgreSQL"]
-            T1[(profiles)]
-            T2[(honeypots)]
-            T3[(events)]
-            T4[(sessions)]
-            T5[(honeytokens)]
-            T6[(audit)]
-            T7[(operators)]
+        NGX["<b>Nginx</b> — пограничный<br/>TLS · два виртуальных хоста:<br/>центр управления и UI · assets.cdn-static.example (канал агентов)"]
+
+        subgraph APP["Приложение FastAPI"]
+            direction LR
+            AUTH["Аутентификация<br/>JWT в httpOnly-cookie<br/>роли admin / viewer"]
+            API["Control API<br/>профили · ловушки · события · экспорт IoC"]
+            ING["Приём телеметрии<br/>валидация · дедупликация · запись"]
+            LISTENER["pg_listener<br/>NOTIFY → перезагрузка события"]
+            WS["WebSocket /ws<br/>живая лента"]
+            API <--> AUTH
+            API --> ING
+            ING --> LISTENER
+            LISTENER --> WS
         end
+
+        WEB["Web UI<br/>обзор парка · события · ловушки · профили"]
+        COLLECTOR["Collector<br/>отдельный процесс стека;<br/>сейчас только heartbeat"]
+        DB[("PostgreSQL<br/>trap_profiles · traps · attack_sessions<br/>security_events · operators · audit_entries")]
+
+        NGX --> APP
+        NGX --> WEB
+        ING --> DB
+        DB -. "NOTIFY security_events (только UUID)" .-> LISTENER
+
+        NET_CENTER["<i>Сети: honeyforge_mgmt_net 172.30.0.0/24 (internal) — API, БД, web, collector;<br/>honeyforge_edge_net — единственная сеть с опубликованным портом (demo: 8443)</i>"]
     end
 
-    OP["👤 Оператор SOC"]
+    OP["👤 Оператор SOC<br/>роль admin или viewer"]
 
-    A1 --> HP_LOW
-    A2 --> HP_MED
-    A3 --> HP_MED
+    ATT -->|"TCP/UDP в эмулируемые порты"| LOW
+    ATT -->|"SSH · HTTP · SQL"| MED
 
-    HP_LOW --> AG_COMMON
-    HP_MED --> AG_COMMON
-    TOK -.срабатывание.-> AG_COMMON
+    AGENT -- "TLS · переменный интервал и размер батча<br/>POST /assets/v2/init (application/javascript)<br/>GET /assets/v2/config · POST /assets/v2/health" --> NGX
 
-    AG_COMMON -- "TLS + jitter<br/>POST /assets/v2/init" --> MASK
-    MASK -- "proxy_pass" --> NGX
-    NGX --> API
+    OP -->|"HTTPS · логин"| NGX
+    OP -->|"REST: фильтры и экспорт CSV"| API
+    OP <-->|"WebSocket /ws"| WS
 
-    API --> COLL
-    COLL --> DB
-    DB -. "NOTIFY events_new" .-> WS
-    API <--> WS
-    API --> WEB
+    subgraph NOTIMPL["Не реализовано (заявлено ТЗ как Bonus)"]
+        direction TB
+        N1["Оркестратор: кнопка «развернуть на удалённом хосте»"]
+        N2["Правила и алерты (FR-C7)"]
+        N3["Honeytokens и детект срабатывания (FR-A6)"]
+        N4["Geo/ASN · агрегаты · топ источников"]
+        N5["Журнал аудита в интерфейсе (данные пишутся, чтения нет)"]
+        N6["mTLS и pinning (MASK-7)"]
+    end
 
-    OP --> NGX
-    OP -- "WebSocket /ws/events" --> WS
-    OP -- "JWT + CRUD" --> API
+    classDef attacker fill:#ffd8d8,stroke:#c33,color:#111
+    classDef trap fill:#fff4d6,stroke:#c90,color:#111
+    classDef center fill:#d8ebff,stroke:#069,color:#111
+    classDef store fill:#e8e8e8,stroke:#555,color:#111
+    classDef future fill:#f4f4f4,stroke:#999,stroke-dasharray: 4 3,color:#666
+    classDef note fill:#ffffff,stroke:#aaa,stroke-dasharray: 2 2,color:#444
 
-    ORCH -. "compose + ssh" .-> DMZ
-
-    classDef attack fill:#ffd8d8,stroke:#c00
-    classDef dmz fill:#fff4d6,stroke:#c90
-    classDef center fill:#d8ebff,stroke:#069
-    class A1,A2,A3 attack
-    class L1,L2,L3,M1,M2,M3,AG_COMMON,MASK,TOK dmz
-    class NGX,API,COLL,WS,ORCH,WEB center
+    class ATT attacker
+    class L_SVC,L_Q,M_SSH,M_HTTP,M_DB,M_FS,AGENT trap
+    class NGX,AUTH,API,ING,LISTENER,WS,WEB,COLLECTOR,OP center
+    class DB store
+    class N1,N2,N3,N4,N5,N6 future
+    class NET_DMZ,NET_CENTER note

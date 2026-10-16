@@ -253,7 +253,7 @@ def test_viewer_ui_hides_mutation_controls() -> None:
     assert 'data-test-result="passed"' in result.stdout, result.stdout
 
 
-_VIEWER_SCENARIO = b"""
+_VIEWER_SCENARIO = """
 <script type="module">
 const waitFor = predicate => new Promise(resolve => {
   const check = () => {
@@ -276,8 +276,8 @@ const hidden =
   document.querySelector('.trap-stop') === null &&
   document.querySelector('.trap-revoke') === null &&
   document.querySelector('.trap-archive') === null &&
-  actions.includes('View only') &&
+  actions.includes('Только просмотр') &&
   document.querySelector('#trap-form [type="submit"]').disabled === true;
 document.body.dataset.testResult = hidden ? 'passed' : 'failed';
 </script>
-"""
+""".encode()

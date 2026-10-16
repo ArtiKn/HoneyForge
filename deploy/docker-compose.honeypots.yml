@@ -115,6 +115,10 @@ networks:
   relay_egress_net:
     name: relay_egress_net
     driver: bridge
+    ipam:
+      # Pinned so an auto-assigned subnet can never swallow relay_service_net.
+      config:
+        - subnet: 172.29.0.0/24
   service_net:
     name: relay_service_net
     driver: bridge

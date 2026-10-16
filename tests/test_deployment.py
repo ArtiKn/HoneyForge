@@ -1,4 +1,5 @@
 import json
+import ipaddress
 import logging
 import os
 import ssl
@@ -144,6 +145,15 @@ def test_deployment_manifests_express_runtime_security_boundaries() -> None:
         ][name]["extra_hosts"]
     assert honeypots["networks"]["service_net"]["internal"] is True
     assert not honeypots["networks"]["relay_egress_net"].get("internal", False)
+    # Docker refuses to create overlapping pools, which broke `make demo` when
+    # the egress pool was auto-assigned; both pools are pinned and disjoint.
+    service_pool = ipaddress.ip_network(
+        honeypots["networks"]["service_net"]["ipam"]["config"][0]["subnet"]
+    )
+    egress_pool = ipaddress.ip_network(
+        honeypots["networks"]["relay_egress_net"]["ipam"]["config"][0]["subnet"]
+    )
+    assert not egress_pool.overlaps(service_pool)
 
 
 def test_nginx_masks_agent_api_and_enforces_proxy_limits() -> None:

@@ -118,8 +118,7 @@ class MediumMySqlService(_LowTcpService):
         sent = 0
         async def send(payloads: list[bytes], sequence: int = 1) -> None:
             nonlocal sent
-            if self.response_delay_seconds:
-                await asyncio.sleep(self.response_delay_seconds)
+            await self.exchange_timing.wait()
             for payload in payloads:
                 packet = len(payload).to_bytes(3, "little") + bytes([sequence % 256]) + payload
                 writer.write(packet)

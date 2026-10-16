@@ -114,8 +114,7 @@ for (const name of ['received_from', 'received_to']) {
   time.addEventListener('input', validate);
 }
 
-filtersForm.addEventListener('submit', event => {
-  event.preventDefault();
+function collectFilters() {
   const target = new URLSearchParams();
   for (const name of filterNames) {
     let value;
@@ -132,7 +131,7 @@ filtersForm.addEventListener('submit', event => {
           const field = filtersForm.elements.namedItem(name);
           field.setCustomValidity('Укажите IPv4 или IPv6 без порта и маски сети.');
           field.reportValidity();
-          return;
+          return null;
         }
         value = normalized;
       }
@@ -145,10 +144,29 @@ filtersForm.addEventListener('submit', event => {
     const date = filtersForm.elements.namedItem('received_to_date');
     date.setCustomValidity('Конец периода должен быть не раньше начала.');
     date.reportValidity();
-    return;
+    return null;
   }
+  return target;
+}
+
+filtersForm.addEventListener('submit', event => {
+  event.preventDefault();
+  const target = collectFilters();
+  if (!target) return;
   const query = target.toString();
   location.assign(query ? `/events.html?${query}` : '/events.html');
+});
+
+document.getElementById('export-csv').addEventListener('click', () => {
+  const target = collectFilters();
+  if (!target) return;
+  const query = target.toString();
+  const link = document.createElement('a');
+  link.href = `/api/v1/security-events/export.csv${query ? `?${query}` : ''}`;
+  link.download = '';
+  document.body.append(link);
+  link.click();
+  link.remove();
 });
 
 function securityEventsUrl(cursor = null) {

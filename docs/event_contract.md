@@ -218,6 +218,30 @@ Control Center нормализует значение к UTC.
 - Realtime: PostgreSQL `NOTIFY` переносит **только UUID** события; listener
   перезагружает полную запись из БД и рассылает её в WebSocket `/ws`.
 
+### 10.1. Экспорт IoC в CSV (FR-C7)
+
+`GET /api/v1/security-events/export.csv` — те же фильтры, что и у списка
+(`trap_id`, `attack_session_id`, `event_type`, `source_ip`, `received_from`,
+`received_to`), плюс `limit` 1..50 000 (по умолчанию 10 000). Формат STIX не
+реализуется.
+
+- Ответ: `text/csv; charset=utf-8`, `Content-Disposition: attachment` с именем
+  `honeyforge-ioc-<UTC-таймстамп>.csv`, строки CRLF (RFC 4180).
+- Колонки: `event_id`, `received_at`, `observed_at`, `trap_name`, `trap_id`,
+  `attack_session_id`, `event_type`, `source_ip`, `source_port`,
+  `target_service`, `target_port`, затем плоские поля payload
+  (`username`, `accepted`, `command`, `cwd`, `http_method`, `http_path`,
+  `query`, `database`, `succeeded`, `bytes_received`, `sha256`) и полный
+  `payload` JSON.
+- Пароли остаются внутри колонки `payload`: отдельной колонки нет, чтобы файл
+  не разносил учётные данные по ячейкам.
+- Значения, начинающиеся с `=`, `+`, `-`, `@`, — экранируются префиксом `'`,
+  иначе Excel выполнит attacker-controlled команду из логина или команды.
+- Порядок строк совпадает со списком: `(received_at DESC, id DESC)`, поэтому
+  при ограничении `limit` в файл попадают самые свежие наблюдения.
+- События одной партии имеют одинаковый `received_at`, порядок внутри неё задаёт
+  `id`.
+
 ## 11. Точки расширения
 
 Приведённые ниже Bonus-возможности добавляются так, чтобы не ломать контракт

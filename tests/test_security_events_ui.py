@@ -233,3 +233,99 @@ def test_security_events_ui_recovers_a_gap_and_deduplicates_realtime_events() ->
         assert result.stdout.count(f"SSH-event-{number}") == 1
     assert result.stdout.count('class="event-time-label">Зафиксировано</span>') == 3
     assert result.stdout.count('class="event-time-label">Получено</span>') == 3
+
+
+def test_security_events_export_button_sends_the_active_filters() -> None:
+    chrome = shutil.which("google-chrome") or shutil.which("chromium")
+    if chrome is None:
+        pytest.skip("Chrome or Chromium is required for the Security Events UI test")
+    web_root = Path(__file__).parent.parent / "center" / "web"
+    probe = b"""
+<script>
+  (async () => {
+    for (let attempt = 0; attempt < 100 && typeof collectFilters !== 'function'; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    const form = document.getElementById('event-filters');
+    form.elements.namedItem('event_type').value = 'authentication_attempt';
+    form.elements.namedItem('source_ip').value = '192.0.2.44';
+    form.elements.namedItem('received_from_date').value = '2026-10-14';
+    form.elements.namedItem('received_from_time').value = '10:30:00';
+    let captured = '';
+    const native = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () {
+      if (this.href.includes('export.csv')) { captured = this.href; return; }
+      return native.call(this);
+    };
+    document.getElementById('export-csv').click();
+    HTMLAnchorElement.prototype.click = native;
+    const marker = document.createElement('div');
+    marker.id = 'export-probe';
+    marker.textContent = captured;
+    document.body.append(marker);
+  })();
+</script>
+"""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            parsed = urlparse(self.path)
+            if parsed.path == "/api/v1/security-events":
+                self._send("application/json", json.dumps({"items": [], "next_cursor": None}).encode())
+                return
+            file_path = web_root / (parsed.path.lstrip("/") or "events.html")
+            if not file_path.is_file():
+                self.send_error(404)
+                return
+            body = file_path.read_bytes()
+            if file_path.name == "events.html":
+                body = body.replace(b"</body>", probe + b"</body>")
+            self._send(
+                {".html": "text/html", ".css": "text/css", ".js": "text/javascript"}.get(
+                    file_path.suffix, "application/octet-stream"
+                ),
+                body,
+            )
+
+        def _send(self, content_type: str, body: bytes) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = subprocess.run(
+            [
+                chrome,
+                "--headless=new",
+                "--no-sandbox",
+                "--disable-gpu",
+                "--disable-dev-shm-usage",
+                "--virtual-time-budget=3000",
+                "--dump-dom",
+                f"http://127.0.0.1:{server.server_port}/events.html",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert "Экспорт IoC (CSV)" in result.stdout
+    probe_markup = result.stdout.split('id="export-probe"')[1]
+    exported = probe_markup.split(">")[1].split("<")[0].replace("&amp;", "&")
+    assert exported.startswith(f"http://127.0.0.1:{server.server_port}/api/v1/security-events/export.csv?")
+    assert "event_type=authentication_attempt" in exported
+    assert "source_ip=192.0.2.44" in exported
+    assert "received_from=" in exported

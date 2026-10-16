@@ -32,7 +32,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .topbar nav a { color: inherit; text-underline-offset: .3em; }
 .operator { color: #b8c7bf; font-size: var(--small); }
 
-.button { min-height: 2.8rem; padding: .65rem 1rem; border: 0; border-radius: 0; background: var(--accent); color: var(--accent-ink); cursor: pointer; font-weight: 720; transition: transform 140ms ease, background-color 140ms ease; }
+.button { min-height: 2.8rem; padding: .65rem 1rem; border: 0; border-radius: 0; background: var(--accent); color: var(--accent-ink); cursor: pointer; font-weight: 720; white-space: nowrap; transition: transform 140ms ease, background-color 140ms ease; }
 .button:hover { background: #d6ff61; }
 .button:active { transform: translateY(2px); }
 .button.secondary { background: var(--dark); color: var(--dark-ink); }

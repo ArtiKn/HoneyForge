@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 from deploy.scripts.demo import (
@@ -111,3 +110,63 @@ def test_seed_adds_new_services_to_existing_demo_profiles(tmp_path, monkeypatch)
     demo.seed_demo('https://test', tmp_path / 'ca.crt', {'OPERATOR_USERNAME': 'operator', 'OPERATOR_PASSWORD': 'test'})
     assert {s['protocol'] for s in updates[0]['services']} == {'ssh', 'http', 'mysql', 'udp'}
     assert {s['protocol'] for s in updates[1]['services']} == {'ssh', 'http', 'mysql'}
+
+
+def test_seed_migrates_the_legacy_demo_masking_and_keeps_operator_edits(
+    tmp_path, monkeypatch
+):
+    from deploy.scripts import demo
+    import copy
+
+    monkeypatch.setattr(demo, "ROOT", tmp_path)
+    monkeypatch.setattr(demo.ssl, "create_default_context", lambda **kwargs: object())
+    monkeypatch.setattr(demo, "build_opener", lambda *args: object())
+    secret_dir = tmp_path / "secrets"
+    secret_dir.mkdir()
+    for name in ("low_trap_secret", "medium_trap_secret"):
+        (secret_dir / name).write_text("existing-secret")
+    profiles = [
+        {
+            "id": "low", "name": "Demo Low", "version": 3, "interaction_level": "low",
+            "services": [{"protocol": "ssh", "internal_port": 22},
+                         {"protocol": "http", "internal_port": 80},
+                         {"protocol": "mysql", "internal_port": 3306},
+                         {"protocol": "udp", "internal_port": 9999}],
+            "decoy_credentials": [], "logging": {"max_payload_bytes": 4096},
+            "masking": {"beacon_interval_seconds": 300, "beacon_jitter_seconds": 45},
+        },
+        {
+            "id": "medium", "name": "Demo Medium", "version": 4, "interaction_level": "medium",
+            "services": [{"protocol": "ssh", "internal_port": 22},
+                         {"protocol": "http", "internal_port": 80},
+                         {"protocol": "mysql", "internal_port": 3306}],
+            "decoy_credentials": [], "logging": {"max_payload_bytes": 4096},
+            "masking": {"beacon_interval_seconds": 900, "beacon_jitter_seconds": 60},
+        },
+    ]
+    updates = []
+
+    def request(opener, url, *, method="GET", payload=None, if_match=None):
+        if url.endswith('/auth/login'):
+            return {}
+        if url.endswith('/trap-profiles'):
+            return copy.deepcopy(profiles)
+        if '/trap-profiles/' in url:
+            updates.append(payload)
+            return {**payload, 'id': url.rsplit('/', 1)[1], 'version': if_match + 1}
+        if url.endswith('/traps'):
+            return [{"id": p["id"], "name": p["name"], "enabled": True,
+                     "status": "online", "is_archived": False} for p in profiles]
+        raise AssertionError(url)
+
+    monkeypatch.setattr(demo, "_json_request", request)
+    demo.seed_demo(
+        'https://test', tmp_path / 'ca.crt',
+        {'OPERATOR_USERNAME': 'operator', 'OPERATOR_PASSWORD': 'test'},
+    )
+
+    assert len(updates) == 1, "only the legacy demo profile is reconciled"
+    migrated = updates[0]['masking']
+    assert migrated['beacon_interval_seconds'] == 5
+    assert migrated['beacon_jitter_seconds'] == 2
+    assert migrated['user_agent'].startswith('Mozilla/5.0')

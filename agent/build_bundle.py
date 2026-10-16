@@ -8,6 +8,8 @@ import zipapp
 
 ROOT = Path(__file__).resolve().parent.parent
 MODULES = {
+    "agent.low.beacon": "beacon",
+    "agent.low.exchange_timing": "exchange_timing",
     "agent.low.honeyforge_low": "listeners",
     "agent.low.profile_runtime": "profile_runtime",
     "agent.low.process_masking": "process_masking",
@@ -24,6 +26,8 @@ def build_bundle(level: str, output: Path) -> None:
     if level not in ("low", "medium"):
         raise ValueError("level must be low or medium")
     sources = {
+        "beacon.py": "agent/low/beacon.py",
+        "exchange_timing.py": "agent/low/exchange_timing.py",
         "listeners.py": "agent/low/honeyforge_low.py",
         "profile_runtime.py": "agent/low/profile_runtime.py",
         "process_masking.py": "agent/low/process_masking.py",

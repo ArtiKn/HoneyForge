@@ -20,6 +20,7 @@ from honeyforge_low import (
     LowSshAgent,
     LowUdpAgent,
 )
+from agent.low.beacon import BeaconSchedule, BeaconSettings
 from process_masking import apply_process_masking, resolve_process_name
 from profile_runtime import ProfileRuntime, TrapService, report_runtime_health
 
@@ -27,6 +28,8 @@ log_handler = logging.StreamHandler()
 log_handler.setFormatter(JsonLogFormatter())
 logging.basicConfig(level=logging.INFO, handlers=[log_handler])
 log = logging.getLogger(resolve_process_name())
+
+DELIVERY_BATCH_LIMIT = 500
 
 
 async def _fetch_configuration(client: AgentClient) -> dict[str, Any]:
@@ -101,6 +104,7 @@ async def run() -> None:
                 "port": int(definition["internal_port"]),
                 "banner": definition.get("banner"),
                 "response_delay_ms": int(emulator.get("response_delay_ms") or 0),
+                "response_jitter_ms": int(emulator.get("response_jitter_ms") or 0),
             }
             if protocol == "ssh":
                 service: TrapService = LowSshAgent(
@@ -125,20 +129,41 @@ async def run() -> None:
     health_interval = float(os.getenv("HEALTH_INTERVAL_SECONDS", "30"))
     profile_interval = float(os.getenv("PROFILE_CHECK_INTERVAL_SECONDS", "30"))
     delivery_interval = float(os.getenv("DELIVERY_INTERVAL_SECONDS", "1"))
+    schedule = BeaconSchedule(
+        BeaconSettings.from_masking(
+            configuration.get("masking"), fallback_interval=delivery_interval
+        )
+    )
+    client.apply_masking(configuration.get("masking"))
+
+    async def refreshed_configuration() -> dict[str, Any]:
+        """Fetch the Trap Profile and adopt its camouflage settings (MASK-5)."""
+
+        config = await client.fetch_configuration()
+        schedule.update(
+            BeaconSettings.from_masking(
+                config.get("masking"), fallback_interval=delivery_interval
+            )
+        )
+        client.apply_masking(config.get("masking"))
+        return config
+
     next_health_at = 0.0
     next_profile_at = asyncio.get_running_loop().time() + profile_interval
     try:
         await runtime.start(configuration)
         while True:
             try:
-                await client.deliver_pending(queue)
+                await client.deliver_pending(
+                    queue, limit=schedule.next_batch_limit(DELIVERY_BATCH_LIMIT)
+                )
             except (OSError, URLError, ValueError) as exc:
                 reload_on_auth_error(client, exc)
                 log.exception("Security Event delivery failed; events remain queued")
             now = asyncio.get_running_loop().time()
             if now >= next_profile_at:
                 try:
-                    if await runtime.refresh(client.fetch_configuration):
+                    if await runtime.refresh(refreshed_configuration):
                         log.info(
                             "Applied Trap Profile change (enabled=%s, version=%s)",
                             runtime.enabled,
@@ -147,7 +172,7 @@ async def run() -> None:
                 except (OSError, URLError, RuntimeError, ValueError) as exc:
                     reload_on_auth_error(client, exc)
                     log.exception("Trap Profile check or apply failed")
-                next_profile_at = now + profile_interval
+                next_profile_at = now + schedule.jittered(profile_interval)
             if now >= next_health_at:
                 try:
                     await report_runtime_health(
@@ -160,8 +185,8 @@ async def run() -> None:
                     reload_on_auth_error(client, exc)
                     log.exception("Agent Health Report delivery failed")
                 else:
-                    next_health_at = now + health_interval
-            await asyncio.sleep(delivery_interval)
+                    next_health_at = now + schedule.jittered(health_interval)
+            await asyncio.sleep(schedule.next_delay())
     finally:
         await runtime.stop()
         queue.close()

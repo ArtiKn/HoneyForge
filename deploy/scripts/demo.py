@@ -373,17 +373,36 @@ def seed_demo(base_url: str, ca_file: Path, values: dict[str, str]) -> None:
         "username": values["OPERATOR_USERNAME"], "password": values["OPERATOR_PASSWORD"]
     })
     trap_profiles = _json_request(opener, f"{base_url}/api/v1/trap-profiles")
+    # The demo keeps the beacon short so the stand reacts within seconds; a real
+    # deployment would run the same masking with minutes-long intervals.
+    demo_masking = {
+        "beacon_interval_seconds": 5,
+        "beacon_jitter_seconds": 2,
+        "user_agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+    }
+    # Stands seeded before the Agent honoured masking still carry the old demo
+    # cadence; migrate exactly that value and leave operator edits untouched.
+    legacy_demo_masking = {"beacon_interval_seconds": 300, "beacon_jitter_seconds": 45}
+    demo_exchange = {"response_delay_ms": 40, "response_jitter_ms": 160}
     trap_profile_specs = {
         "Demo Low": {"interaction_level": "low", "services": [
-            {"protocol": "ssh", "internal_port": 22, "banner": "SSH-2.0-OpenSSH_8.9p1"},
-            {"protocol": "http", "internal_port": 80, "banner": "nginx/1.24.0"},
-            {"protocol": "mysql", "internal_port": 3306, "banner": "5.7.42-MySQL"},
+            {"protocol": "ssh", "internal_port": 22, "banner": "SSH-2.0-OpenSSH_8.9p1",
+             "emulator_settings": dict(demo_exchange)},
+            {"protocol": "http", "internal_port": 80, "banner": "nginx/1.24.0",
+             "emulator_settings": dict(demo_exchange)},
+            {"protocol": "mysql", "internal_port": 3306, "banner": "5.7.42-MySQL",
+             "emulator_settings": dict(demo_exchange)},
             {"protocol": "udp", "internal_port": 9999, "banner": "Service ready"},
-        ]},
+        ], "masking": dict(demo_masking)},
         "Demo Medium": {"interaction_level": "medium", "services": [
-            {"protocol": "ssh", "internal_port": 22, "banner": "OpenSSH_8.9p1", "emulator_settings": {"max_attempts": 5, "response_delay_ms": 150}},
-            {"protocol": "http", "internal_port": 80, "banner": "nginx/1.24.0"},
-            {"protocol": "mysql", "internal_port": 3306, "banner": "8.0.36"},
+            {"protocol": "ssh", "internal_port": 22, "banner": "OpenSSH_8.9p1", "emulator_settings": {"max_attempts": 5, "response_delay_ms": 150, "response_jitter_ms": 350}},
+            {"protocol": "http", "internal_port": 80, "banner": "nginx/1.24.0",
+             "emulator_settings": dict(demo_exchange)},
+            {"protocol": "mysql", "internal_port": 3306, "banner": "8.0.36",
+             "emulator_settings": dict(demo_exchange)},
         ], "decoy_credentials": [
             {"username": "svc-backup", "password": "Backup!2026"},
             {"username": "admin", "password": "Summer2026!"},
@@ -392,10 +411,7 @@ def seed_demo(base_url: str, ca_file: Path, values: dict[str, str]) -> None:
             "capture_commands": True,
             "capture_http_bodies": True,
             "max_payload_bytes": 4096,
-        }, "masking": {
-            "beacon_interval_seconds": 300,
-            "beacon_jitter_seconds": 45,
-        }},
+        }, "masking": dict(demo_masking)},
     }
     trap_profile_ids: dict[str, str] = {}
     for name, spec in trap_profile_specs.items():
@@ -408,9 +424,17 @@ def seed_demo(base_url: str, ca_file: Path, values: dict[str, str]) -> None:
             # Add newly supported demo services without replacing operator settings.
             additions = [service for service in spec["services"]
                          if not any(item["protocol"] == service["protocol"] for item in existing["services"])]
-            if additions:
+            # A stand seeded before MASK-5 existed carries no masking; adopt the
+            # demo cadence once instead of leaving the Agent on the raw interval.
+            current_masking = existing.get("masking") or {}
+            adopt_masking = bool(spec.get("masking")) and (
+                not current_masking or current_masking == legacy_demo_masking
+            )
+            if additions or adopt_masking:
                 editable = {key: existing[key] for key in ("name", "interaction_level", "services", "decoy_credentials", "logging", "masking")}
                 editable["services"] = [*existing["services"], *additions]
+                if adopt_masking:
+                    editable["masking"] = spec["masking"]
                 existing = _json_request(
                     opener, f"{base_url}/api/v1/trap-profiles/{existing['id']}",
                     method="PUT", payload=editable, if_match=existing["version"],

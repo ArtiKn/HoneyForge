@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import parse_qs
 from uuid import UUID, uuid4
 
+from agent.low.exchange_timing import ExchangeTiming
 from agent.low.honeyforge_low import EventQueue
 from honeyforge_common.telemetry import captured_text
 
@@ -79,6 +80,7 @@ class MediumHttpService:
         session_registry: HttpAttackSessionRegistry | None = None,
         decoy_credentials: list[dict[str, Any]] | None = None,
         response_delay_ms: int = 0,
+        response_jitter_ms: int = 0,
         capture_credentials: bool = True,
         capture_http_bodies: bool = True,
         max_payload_bytes: int = 4096,
@@ -101,6 +103,9 @@ class MediumHttpService:
         self.session_timeout_seconds = session_timeout_seconds
         self.decoy_credentials = decoy_credentials or []
         self.response_delay_seconds = max(response_delay_ms, 0) / 1000.0
+        self.exchange_timing = ExchangeTiming(
+            self.response_delay_seconds, max(response_jitter_ms, 0) / 1000.0
+        )
         self.capture_credentials = capture_credentials
         self.capture_http_bodies = capture_http_bodies
         self.max_payload_bytes = max(max_payload_bytes, 0)
@@ -212,8 +217,7 @@ class MediumHttpService:
                 method, target, headers, body, attack_session_id, source_ip, source_port
             )
             response = self._response(status, response_headers, content)
-            if self.response_delay_seconds:
-                await asyncio.sleep(self.response_delay_seconds)
+            await self.exchange_timing.wait()
             writer.write(response)
             await writer.drain()
             bytes_sent = len(response)

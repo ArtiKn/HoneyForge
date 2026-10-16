@@ -5,10 +5,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, desc, or_, select
+from sqlalchemy import Select, and_, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from center.api.models import SecurityEvent
+from center.api.models import SecurityEvent, Trap
 from center.api.schemas.security_event import SecurityEventPage
 
 
@@ -39,24 +39,12 @@ class SecurityEventQuery:
         cursor: str | None,
         limit: int,
     ) -> SecurityEventPage:
-        statement = select(SecurityEvent).order_by(
-            desc(SecurityEvent.received_at), desc(SecurityEvent.id)
+        statement = self._apply_filters(
+            select(SecurityEvent).order_by(
+                desc(SecurityEvent.received_at), desc(SecurityEvent.id)
+            ),
+            filters,
         )
-        comparisons = {
-            SecurityEvent.trap_id: filters.trap_id,
-            SecurityEvent.attack_session_id: filters.attack_session_id,
-            SecurityEvent.event_type: filters.event_type,
-            SecurityEvent.source_ip: filters.source_ip,
-        }
-        for column, value in comparisons.items():
-            if value is not None:
-                statement = statement.where(column == value)
-        if filters.received_from is not None:
-            statement = statement.where(
-                SecurityEvent.received_at >= filters.received_from
-            )
-        if filters.received_to is not None:
-            statement = statement.where(SecurityEvent.received_at <= filters.received_to)
         if cursor is not None:
             received_at, event_id = self._decode_cursor(cursor)
             statement = statement.where(
@@ -77,6 +65,45 @@ class SecurityEventQuery:
             else None
         )
         return SecurityEventPage(items=items, next_cursor=next_cursor)
+
+    async def export_rows(
+        self, filters: SecurityEventFilters, *, limit: int
+    ) -> list[tuple[SecurityEvent, str]]:
+        """Newest matching Security Events with their Trap names (FR-C7 IoC export).
+
+        The order matches the investigation view, so a capped export keeps the
+        most recent observations instead of the oldest page of the period.
+        """
+
+        statement = self._apply_filters(
+            select(SecurityEvent, Trap.name)
+            .join(Trap, SecurityEvent.trap_id == Trap.id)
+            .order_by(desc(SecurityEvent.received_at), desc(SecurityEvent.id)),
+            filters,
+        )
+        rows = (await self._session.execute(statement.limit(limit))).all()
+        return [(event, name) for event, name in rows]
+
+    @staticmethod
+    def _apply_filters(
+        statement: Select[tuple], filters: SecurityEventFilters
+    ) -> Select[tuple]:
+        comparisons = {
+            SecurityEvent.trap_id: filters.trap_id,
+            SecurityEvent.attack_session_id: filters.attack_session_id,
+            SecurityEvent.event_type: filters.event_type,
+            SecurityEvent.source_ip: filters.source_ip,
+        }
+        for column, value in comparisons.items():
+            if value is not None:
+                statement = statement.where(column == value)
+        if filters.received_from is not None:
+            statement = statement.where(
+                SecurityEvent.received_at >= filters.received_from
+            )
+        if filters.received_to is not None:
+            statement = statement.where(SecurityEvent.received_at <= filters.received_to)
+        return statement
 
     @staticmethod
     def _encode_cursor(received_at: datetime, event_id: UUID) -> str:

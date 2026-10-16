@@ -11,6 +11,15 @@ class TrapEmulatorSettings(BaseModel):
     shell: Literal["fixed"] | None = None
     max_attempts: int | None = Field(default=None, ge=1, le=100)
     response_delay_ms: int | None = Field(default=None, ge=0, le=10_000)
+    response_jitter_ms: int | None = Field(
+        default=None,
+        ge=0,
+        le=10_000,
+        description=(
+            "Random spread added to every response so reply timings never "
+            "repeat with machine precision (MASK-6)."
+        ),
+    )
 
 
 class TrapServiceDefinition(BaseModel):

@@ -15,6 +15,8 @@ from uuid import UUID, uuid4
 
 import asyncssh
 
+from agent.low.beacon import BeaconSchedule, BeaconSettings
+from agent.low.exchange_timing import ExchangeTiming
 from agent.low.honeyforge_low import AgentClient, EventQueue, JsonLogFormatter
 from honeyforge_common.telemetry import captured_text
 from agent.low.process_masking import apply_process_masking, resolve_process_name
@@ -28,6 +30,8 @@ from agent.medium.mysql_service import MediumMySqlService
 from agent.medium.http_service import HttpAttackSessionRegistry, MediumHttpService
 
 log = logging.getLogger(resolve_process_name())
+
+DELIVERY_BATCH_LIMIT = 500
 
 
 async def _fetch_configuration(client: AgentClient) -> dict[str, Any]:
@@ -129,7 +133,7 @@ class _FakeShellSession(asyncssh.SSHServerSession[str]):
     def _respond(self, response: str, should_close: bool) -> None:
         """Delay the write when the profile emulates a slower service."""
 
-        delay = self.service.response_delay_seconds
+        delay = self.service.exchange_timing.next_delay()
         if delay <= 0:
             self._emit(response, should_close)
             return
@@ -232,6 +236,7 @@ class MediumSshService:
         max_attempts: int = 3,
         decoy_credentials: list[dict[str, Any]] | None = None,
         response_delay_ms: int = 0,
+        response_jitter_ms: int = 0,
         capture_credentials: bool = True,
         capture_commands: bool = True,
         max_payload_bytes: int = 4096,
@@ -249,6 +254,9 @@ class MediumSshService:
         self.max_attempts = max_attempts
         self.decoy_credentials = decoy_credentials or []
         self.response_delay_seconds = max(response_delay_ms, 0) / 1000.0
+        self.exchange_timing = ExchangeTiming(
+            self.response_delay_seconds, max(response_jitter_ms, 0) / 1000.0
+        )
         self.capture_credentials = capture_credentials
         self.capture_commands = capture_commands
         self.max_payload_bytes = max(max_payload_bytes, 0)
@@ -446,6 +454,7 @@ async def run() -> None:
                 "port": int(definition["internal_port"]),
                 "queue": queue,
                 "response_delay_ms": int(settings.get("response_delay_ms") or 0),
+                "response_jitter_ms": int(settings.get("response_jitter_ms") or 0),
             }
             if definition["protocol"] == "ssh":
                 service: TrapService = MediumSshService(
@@ -483,18 +492,39 @@ async def run() -> None:
         health_interval = float(os.getenv("HEALTH_INTERVAL_SECONDS", "30"))
         profile_interval = float(os.getenv("PROFILE_CHECK_INTERVAL_SECONDS", "30"))
         delivery_interval = float(os.getenv("DELIVERY_INTERVAL_SECONDS", "1"))
+        schedule = BeaconSchedule(
+            BeaconSettings.from_masking(
+                configuration.get("masking"), fallback_interval=delivery_interval
+            )
+        )
+        client.apply_masking(configuration.get("masking"))
+
+        async def refreshed_configuration() -> dict[str, Any]:
+            """Fetch the Trap Profile and adopt its camouflage settings (MASK-5)."""
+
+            config = await client.fetch_configuration()
+            schedule.update(
+                BeaconSettings.from_masking(
+                    config.get("masking"), fallback_interval=delivery_interval
+                )
+            )
+            client.apply_masking(config.get("masking"))
+            return config
+
         next_health_at = 0.0
         next_profile_at = asyncio.get_running_loop().time() + profile_interval
         while True:
             try:
-                await client.deliver_pending(queue)
+                await client.deliver_pending(
+                    queue, limit=schedule.next_batch_limit(DELIVERY_BATCH_LIMIT)
+                )
             except (OSError, URLError, ValueError) as exc:
                 reload_on_auth_error(client, exc)
                 log.exception("Security Event delivery failed; events remain queued")
             now = asyncio.get_running_loop().time()
             if now >= next_profile_at:
                 try:
-                    if await runtime.refresh(client.fetch_configuration):
+                    if await runtime.refresh(refreshed_configuration):
                         log.info(
                             "Applied Trap Profile change (enabled=%s, version=%s)",
                             runtime.enabled,
@@ -503,7 +533,7 @@ async def run() -> None:
                 except (OSError, URLError, RuntimeError, ValueError) as exc:
                     reload_on_auth_error(client, exc)
                     log.exception("Trap Profile check or apply failed")
-                next_profile_at = now + profile_interval
+                next_profile_at = now + schedule.jittered(profile_interval)
             if now >= next_health_at:
                 try:
                     await report_runtime_health(
@@ -516,8 +546,8 @@ async def run() -> None:
                     reload_on_auth_error(client, exc)
                     log.exception("Agent Health Report delivery failed")
                 else:
-                    next_health_at = now + health_interval
-            await asyncio.sleep(delivery_interval)
+                    next_health_at = now + schedule.jittered(health_interval)
+            await asyncio.sleep(schedule.next_delay())
     finally:
         await runtime.stop()
         queue.close()

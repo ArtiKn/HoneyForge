@@ -98,8 +98,9 @@ erDiagram
   (протокол, порт, баннер, `emulator_settings`), `decoy_credentials` (учётные
   данные-приманки), `logging` (что и в каком объёме логируется) и `masking`
   (интервалы и джиттер beacon'ов, `user_agent`). Control Center выдаёт их Agent
-  через `GET /assets/v2/config`; Agent применяет `decoy_credentials`, `logging`
-  и `emulator_settings` (`response_delay_ms`, `max_attempts`).
+  через `GET /assets/v2/config`; Agent применяет `decoy_credentials`, `logging`,
+  `masking` (beacon-интервал, джиттер, `User-Agent`) и `emulator_settings`
+  (`response_delay_ms`, `response_jitter_ms`, `max_attempts`).
 - `Operator.role` — `admin` (полный доступ) или `viewer` (только чтение).
   Разграничение доступа (FR-C5) применяется на всех изменяющих операциях API;
   запрещённая попытка сохраняется в `audit_entries` как `operator.access.denied`.

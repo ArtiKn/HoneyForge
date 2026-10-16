@@ -11,6 +11,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from honeyforge_common.logging import redact_credentials
 from honeyforge_common.telemetry import captured_binary
+from agent.low.exchange_timing import ExchangeTiming
 
 log = logging.getLogger(__name__)
 
@@ -305,7 +306,35 @@ class AgentClient:
         self.base_url = base_url.rstrip("/")
         self.trap_secret = trap_secret
         self._secret_file = secret_file
+        self.user_agent: str | None = None
         self.ssl_context = ssl.create_default_context(cafile=ca_file)
+
+    def apply_masking(self, masking: dict[str, Any] | None) -> str | None:
+        """Adopt the Trap Profile camouflage settings (MASK-2, MASK-5).
+
+        The center ships a `user_agent` so the masked channel is not
+        identifiable by the default client string; anything blank, oversized or
+        carrying line breaks is ignored and the transport default stays.
+        """
+
+        candidate = (masking or {}).get("user_agent")
+        if not isinstance(candidate, str):
+            self.user_agent = None
+            return None
+        candidate = candidate.strip()
+        if not candidate or len(candidate) > 256 or any(
+            ord(char) < 32 or ord(char) == 127 for char in candidate
+        ):
+            self.user_agent = None
+            return None
+        self.user_agent = candidate
+        return candidate
+
+    def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
+        headers = dict(extra or {})
+        if self.user_agent is not None:
+            headers["User-Agent"] = self.user_agent
+        return headers
 
     def reload_secret(self) -> bool:
         """Re-read the Trap secret from disk after an operator re-enrollment.
@@ -328,7 +357,7 @@ class AgentClient:
     async def fetch_configuration(self) -> dict[str, Any]:
         request = Request(
             f"{self.base_url}/assets/v2/config",
-            headers={"Authorization": f"Bearer {self.trap_secret}"},
+            headers=self._headers({"Authorization": f"Bearer {self.trap_secret}"}),
         )
         response = await asyncio.to_thread(
             urlopen, request, context=self.ssl_context, timeout=10
@@ -357,10 +386,12 @@ class AgentClient:
         request = Request(
             f"{self.base_url}/assets/v2/health",
             data=json.dumps(payload, separators=(",", ":")).encode(),
-            headers={
-                "Authorization": f"Bearer {self.trap_secret}",
-                "Content-Type": "application/json",
-            },
+            headers=self._headers(
+                {
+                    "Authorization": f"Bearer {self.trap_secret}",
+                    "Content-Type": "application/json",
+                }
+            ),
             method="POST",
         )
         await asyncio.to_thread(
@@ -384,10 +415,12 @@ class AgentClient:
         request = Request(
             f"{self.base_url}/assets/v2/init",
             data=request_body,
-            headers={
-                "Authorization": f"Bearer {self.trap_secret}",
-                "Content-Type": "application/javascript",
-            },
+            headers=self._headers(
+                {
+                    "Authorization": f"Bearer {self.trap_secret}",
+                    "Content-Type": "application/javascript",
+                }
+            ),
             method="POST",
         )
         try:
@@ -445,6 +478,7 @@ class _LowTcpService:
         idle_timeout_seconds: float = 10,
         max_input_bytes: int = 64 * 1024,
         response_delay_ms: int = 0,
+        response_jitter_ms: int = 0,
         max_payload_bytes: int = 4096,
         capture_credentials: bool = True,
         capture_http_bodies: bool = True,
@@ -460,6 +494,9 @@ class _LowTcpService:
         self.idle_timeout_seconds = idle_timeout_seconds
         self.max_input_bytes = max_input_bytes
         self.response_delay_seconds = max(response_delay_ms, 0) / 1000.0
+        self.exchange_timing = ExchangeTiming(
+            self.response_delay_seconds, max(response_jitter_ms, 0) / 1000.0
+        )
         self._active_connections = 0
         self._server: asyncio.Server | None = None
         self._handlers: set[asyncio.Task[None]] = set()
@@ -753,8 +790,7 @@ class LowHttpAgent(_LowTcpService):
             + b"\r\nConnection: close\r\n\r\n"
             + body
         )
-        if self.response_delay_seconds:
-            await asyncio.sleep(self.response_delay_seconds)
+        await self.exchange_timing.wait()
         writer.write(response)
         await writer.drain()
         return len(response)
@@ -790,8 +826,7 @@ class LowMySqlAgent(_LowTcpService):
 
     async def serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, **kwargs: str) -> int:
         handshake = self._handshake()
-        if self.response_delay_seconds:
-            await asyncio.sleep(self.response_delay_seconds)
+        await self.exchange_timing.wait()
         writer.write(handshake)
         await writer.drain()
         received = await asyncio.wait_for(
@@ -817,6 +852,7 @@ class LowSshAgent:
         connection_limit: int = 100,
         idle_timeout_seconds: float = 10,
         response_delay_ms: int = 0,
+        response_jitter_ms: int = 0,
         max_payload_bytes: int = 4096,
         capture_credentials: bool = True,
         capture_http_bodies: bool = True,
@@ -832,6 +868,9 @@ class LowSshAgent:
         self.connection_limit = connection_limit
         self.idle_timeout_seconds = idle_timeout_seconds
         self.response_delay_seconds = max(response_delay_ms, 0) / 1000.0
+        self.exchange_timing = ExchangeTiming(
+            self.response_delay_seconds, max(response_jitter_ms, 0) / 1000.0
+        )
         self._active_connections = 0
         self._server: asyncio.Server | None = None
         self._handlers: set[asyncio.Task[None]] = set()
@@ -920,8 +959,7 @@ class LowSshAgent:
                     payload={"banner": self.banner},
                 )
             )
-            if self.response_delay_seconds:
-                await asyncio.sleep(self.response_delay_seconds)
+            await self.exchange_timing.wait()
             writer.write(banner_bytes)
             await writer.drain()
             received = bytearray()
@@ -1041,8 +1079,7 @@ class LowUdpAgent(_LowTcpService, asyncio.DatagramProtocol):
         capture_input(self, data, context, kind="udp")
         sent = 0
         try:
-            if self.response_delay_seconds:
-                await asyncio.sleep(self.response_delay_seconds)
+            await self.exchange_timing.wait()
             if self._transport is not None:
                 response = self.udp_banner.encode()[:min(512, len(data))]
                 if response:

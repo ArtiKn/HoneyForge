@@ -779,6 +779,7 @@ async def test_enrolled_agent_reads_its_assigned_trap_profile(
                     "shell": None,
                     "max_attempts": None,
                     "response_delay_ms": None,
+                    "response_jitter_ms": None,
                 },
             }
         ],
@@ -1461,8 +1462,8 @@ def _assert_events_visible_in_browser(events: list[dict]) -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
-    assert "Connection opened" in rendered.stdout
-    assert "Connection closed" in rendered.stdout
+    assert "Соединение открыто" in rendered.stdout
+    assert "Соединение закрыто" in rendered.stdout
 
 
 async def test_operator_reads_updates_starts_and_stops_a_trap(

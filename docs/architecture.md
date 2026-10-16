@@ -36,7 +36,7 @@ HoneyForge — распределённая платформа-ловушка, �
 Collector нормализует батч, дополняет geoip, пишет в `events`/`sessions`. Postgres-триггер делает `NOTIFY events_new`. `pg_listener` ловит и пушит в WebSocket. Dashboard оператора обновляется в реальном времени.
 
 **4) Оператор → центр.**
-Логин (`/auth/login` → JWT) → CRUD профилей (`/profiles`) → регистрация ловушек (`/honeypots`) → фильтрация событий (`/events?filters=...`) → экспорт IoC (`/alerts/export.csv`).
+Логин (`/auth/login` → JWT) → CRUD профилей (`/profiles`) → регистрация ловушек (`/honeypots`) → фильтрация событий (`/events?filters=...`) → экспорт IoC (`GET /api/v1/security-events/export.csv` с теми же фильтрами, только CSV).
 
 ## 1.4. Сетевая изоляция
 
@@ -54,8 +54,9 @@ Collector нормализует батч, дополняет geoip, пишет 
 | Что | Как |
 |---|---|
 | Endpoint телеметрии | URI `/assets/v2/init`, `Content-Type: application/javascript` |
-| User-Agent агента | Под Chrome/Firefox (см. `channel.py`) |
+| Тайминги beacon'а | `masking.beacon_interval_seconds` ± `beacon_jitter_seconds` (по умолчанию 30% интервала); без настроек Agent берёт `DELIVERY_INTERVAL_SECONDS` |
+| Размер запросов beacon'а | Случайный батч 40–100% от лимита, чтобы соседние запросы отличались по весу |
+| User-Agent агента | `masking.user_agent` из профиля (иначе — дефолтный клиент urllib) |
 | Процесс Agent | Маскируется: `prctl(PR_SET_NAME)` + перезапись argv дают нейтральное имя (`syslog-relay`, настраивается через `PROCESS_MASK_NAME`) |
-| Тайминги beacon'а | jitter ±30% от интервала |
 | Баннеры сервисов | Реалистичные строки (OpenSSH_8.9, nginx/1.24.0, MySQL 8.0) |
-| Ответы fake-shell | Задержки как у настоящего bash |
+| Ответы fake-shell | Задержки как у настоящего bash: `response_delay_ms` + случайный разброс `response_jitter_ms` |

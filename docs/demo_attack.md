@@ -14,7 +14,7 @@
 2. С атакующей машины (`nmap -sV -p 22,80,3306 <honeypot_ip>`).
 3. Low-ловушка отвечает баннерами (`SSH-2.0-OpenSSH_8.9`, `nginx/1.24.0`, `5.7.42-MySQL`).
 4. Агент формирует 3 события `type=probe` с `proto/service/version`, кладёт в SQLite-буфер.
-5. Через ~5–15 сек (с джиттером) — батч уходит на центр.
+5. Через `masking.beacon_interval_seconds` ± `beacon_jitter_seconds` (в демо 5±2 сек) — батч уходит на центр; размер батча тоже варьируется, чтобы запросы не выглядели одинаковыми.
 6. Collector пишет в `events`, триггер `NOTIFY`, WS-пуш → строка появляется в dashboard.
 
 **Что показываем судье:** фильтр «по ловушке», geoip, временная шкала.
@@ -38,7 +38,7 @@
 4. Medium-эмулятор отвечает реалистично (`root`, фейковый passwd, `--2025-...--` от wget), все команды пишутся в `sessions.commands[]`.
 5. Агент шлёт батч: `event(type=auth_success)`, `event(type=command)`, `event(type=download)`.
 6. В dashboard оператор видит сессию: `src_ip → creds → commands`. Нажимает **Экспорт IoC → CSV**.
-7. Center отдаёт `ioc_2025-XX-XX.csv` со строками: `src_ip, src_port, username, password, cmd, ts`.
+7. Center отдаёт `honeyforge-ioc-<UTC>.csv` (RFC 4180) с колонками `event_id, received_at, observed_at, trap_name, trap_id, attack_session_id, event_type, source_ip, source_port, target_service, target_port, username, accepted, command, cwd, http_method, http_path, query, database, succeeded, bytes_received, sha256, payload`. Пароли остаются внутри колонки `payload`; значения, начинающиеся с `=`, `+`, `-`, `@`, экранируются, чтобы Excel не выполнил команду атакующего.
 
 **Что показываем судье:** реальные креды в UI, цепочку команд, скачанный CSV.
 
@@ -75,7 +75,7 @@ sequenceDiagram
     A->>H: nmap -sV / hydra / exploit
     H->>H: emit event(schema)
     H->>B: append to buffer
-    Note over B: каждые 5–15с (jitter)
+    Note over B: beacon = masking.beacon_interval_seconds ± jitter (демо 5±2с)
     B->>N: POST /assets/v2/init (TLS)
     N->>API: proxy_pass → /api/telemetry
     API->>DB: INSERT events

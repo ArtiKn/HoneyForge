@@ -21,7 +21,7 @@ HONEY_DISTRIBUTED := $(COMPOSE) $(HONEY_FILE)
 .PHONY: help env up down restart logs ps build config test test-db certs \
         demo demo-env demo-seed demo-attack demo-smoke demo-reset \
         demo-status demo-export demo-lifecycle demo-rbac demo-masking demo-payload demo-tour \
-        demo-trap-host demo-logs \
+        demo-trap-host demo-logs docs-diagrams \
         honeypots-up honeypots-down honeypots-build honeypots-config \
         honeypots-distributed-config clean
 
@@ -151,6 +151,15 @@ demo-logs: ## Follow center and trap logs side by side
 	@echo "[logs] center:"; $(CENTER) logs -f --tail=40 & \
 	$(HONEY) logs -f --tail=40; \
 	kill $$! 2>/dev/null || true
+
+# --- documentation --------------------------------------------------------
+
+docs-diagrams: ## Render docs/*.mmd into docs/*.png (needs Node.js; one-off)
+	@for diagram in architecture database; do \
+		npx --yes @mermaid-js/mermaid-cli -i docs/$$diagram.mmd \
+			-o docs/$$diagram.png -b white -s 2 || exit 1; \
+		echo "[docs-diagrams] docs/$$diagram.png готов"; \
+	done
 
 # --- distributed honeypot fleet -------------------------------------------
 

@@ -13,7 +13,9 @@ KEY_FILE="${CERT_DIR}/center.key"
 
 DAYS="${CERT_DAYS:-365}"
 CA_DAYS="${CA_DAYS:-3650}"
-CA_SUBJECT="${CA_SUBJECT:-/CN=HoneyForge Demo CA}"
+# This CA is mounted onto every Trap host so the Agent can verify the Control
+# Center, which means its subject line must not name the platform (MASK-4).
+CA_SUBJECT="${CA_SUBJECT:-/CN=Local Demo CA}"
 SUBJECT="${CERT_SUBJECT:-/CN=assets.cdn-static.example}"
 SAN="${CERT_SAN:-DNS:localhost,DNS:assets.cdn-static.example,IP:127.0.0.1}"
 

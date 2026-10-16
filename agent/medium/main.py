@@ -88,7 +88,7 @@ class _FakeShellSession(asyncssh.SSHServerSession[str]):
 
     def session_started(self) -> None:
         self._reset_idle_timer()
-        self._respond("Welcome to Ubuntu 22.04 LTS (HoneyForge)\r\n$ ", False)
+        self._respond("Welcome to Ubuntu 22.04 LTS\r\n$ ", False)
 
     def data_received(self, data: str, datatype: asyncssh.DataType) -> None:
         self._reset_idle_timer()
@@ -234,7 +234,7 @@ class MediumSshService:
         idle_timeout_seconds: float = 30,
         max_input_bytes: int = 4096,
         max_attempts: int = 3,
-        decoy_credentials: list[dict[str, Any]] | None = None,
+        accepted_credentials: list[dict[str, Any]] | None = None,
         response_delay_ms: int = 0,
         response_jitter_ms: int = 0,
         capture_credentials: bool = True,
@@ -252,7 +252,7 @@ class MediumSshService:
         self.idle_timeout_seconds = idle_timeout_seconds
         self.max_input_bytes = max_input_bytes
         self.max_attempts = max_attempts
-        self.decoy_credentials = decoy_credentials or []
+        self.accepted_credentials = accepted_credentials or []
         self.response_delay_seconds = max(response_delay_ms, 0) / 1000.0
         self.exchange_timing = ExchangeTiming(
             self.response_delay_seconds, max(response_jitter_ms, 0) / 1000.0
@@ -352,18 +352,18 @@ class MediumSshService:
         return FakeShell(username).execute(command)
 
     def password_accepted(self, username: str, password: str, attempt: int) -> bool:
-        """Honor configured decoy credentials, else the legacy attempt budget."""
+        """Honor configured credentials, else the legacy attempt budget."""
 
-        decoys = [
+        allowed = [
             credential
-            for credential in self.decoy_credentials
+            for credential in self.accepted_credentials
             if credential.get("service") in (None, "ssh")
         ]
-        if decoys:
+        if allowed:
             return any(
                 credential.get("username") == username
                 and credential.get("password") == password
-                for credential in decoys
+                for credential in allowed
             )
         return attempt <= self.max_attempts
 
@@ -435,7 +435,7 @@ async def run() -> None:
             raise RuntimeError(
                 "Medium Trap Agent requires a medium-interaction Trap Profile"
             )
-        decoy_credentials = list(config.get("decoy_credentials") or [])
+        accepted_credentials = list(config.get("decoy_credentials") or [])
         logging_settings = dict(config.get("logging") or {})
         capture_credentials = bool(logging_settings.get("capture_credentials", True))
         capture_commands = bool(logging_settings.get("capture_commands", True))
@@ -462,7 +462,7 @@ async def run() -> None:
                     banner=definition.get("banner")
                     or "OpenSSH_8.9p1 Ubuntu-3ubuntu0.10",
                     max_attempts=int(settings.get("max_attempts") or 3),
-                    decoy_credentials=decoy_credentials,
+                    accepted_credentials=accepted_credentials,
                     capture_credentials=capture_credentials,
                     capture_commands=capture_commands,
                     max_payload_bytes=max_payload_bytes,
@@ -470,7 +470,7 @@ async def run() -> None:
             elif definition["protocol"] == "mysql":
                 service = MediumMySqlService(
                     **common, banner=definition.get("banner"),
-                    decoy_credentials=decoy_credentials, capture_credentials=capture_credentials,
+                    accepted_credentials=accepted_credentials, capture_credentials=capture_credentials,
                     capture_commands=capture_commands, max_payload_bytes=max_payload_bytes,
                 )
             else:
@@ -478,7 +478,7 @@ async def run() -> None:
                     **common,
                     banner=definition.get("banner") or "nginx/1.24.0",
                     session_registry=http_sessions,
-                    decoy_credentials=decoy_credentials,
+                    accepted_credentials=accepted_credentials,
                     capture_credentials=capture_credentials,
                     capture_http_bodies=capture_http_bodies,
                     max_payload_bytes=max_payload_bytes,

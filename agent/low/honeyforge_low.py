@@ -702,6 +702,21 @@ class LowHttpAgent(_LowTcpService):
     def banner(self) -> str:
         return self.http_banner
 
+    def _default_body(self) -> bytes:
+        """Return a landing page matching the advertised Server header.
+
+        The static Low profile answers every request with one body, so the body
+        is derived from the banner instead of naming the platform that runs the
+        port: anything the attacker reads over HTTP has to be something the
+        real service behind that banner would return (MASK-6).
+        """
+
+        product = self.http_banner.split("/", 1)[0].strip() or "nginx"
+        return (
+            f"<html><head><title>Welcome to {product}!</title></head>"
+            f"<body><h1>Welcome to {product}!</h1></body></html>"
+        ).encode()
+
     def session_id_for(self, source_ip: str, source_port: int) -> str:
         return self._session_registry.get(
             self.trap_id,
@@ -781,7 +796,9 @@ class LowHttpAgent(_LowTcpService):
                     },
                 )
             )
-        body = b"<html><title>HoneyForge</title><body>HoneyForge</body></html>"
+        # The body has to look like whatever the configured banner advertises, so a
+        # scanner learns nothing about the platform that runs the port (MASK-6).
+        body = self._default_body()
         response = (
             b"HTTP/1.1 200 OK\r\nServer: "
             + self.http_banner.encode()
@@ -801,7 +818,7 @@ class LowMySqlAgent(_LowTcpService):
 
     def __init__(self, *, banner: str | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.mysql_banner = banner or "8.0.36-HoneyForge"
+        self.mysql_banner = banner or "8.0.36"
 
     def banner(self) -> str:
         return self.mysql_banner

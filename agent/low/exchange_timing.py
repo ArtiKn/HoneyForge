@@ -1,4 +1,4 @@
-"""Human-like pacing of decoy responses (MASK-6).
+"""Human-like pacing of emulated service responses (MASK-6).
 
 Every attacker-visible exchange gets its own delay: the Trap Profile's
 configured `response_delay_ms` plus a random slice of `response_jitter_ms`.

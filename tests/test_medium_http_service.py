@@ -215,7 +215,7 @@ async def test_medium_http_honours_decoy_credentials(tmp_path: Path) -> None:
         host="127.0.0.1",
         port=0,
         queue=queue,
-        decoy_credentials=[
+        accepted_credentials=[
             {"username": "admin", "password": "letmein", "service": "http"}
         ],
         session_timeout_seconds=60,

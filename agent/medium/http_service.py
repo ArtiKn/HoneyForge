@@ -78,7 +78,7 @@ class MediumHttpService:
         max_input_bytes: int = 64 * 1024,
         session_timeout_seconds: float = 15 * 60,
         session_registry: HttpAttackSessionRegistry | None = None,
-        decoy_credentials: list[dict[str, Any]] | None = None,
+        accepted_credentials: list[dict[str, Any]] | None = None,
         response_delay_ms: int = 0,
         response_jitter_ms: int = 0,
         capture_credentials: bool = True,
@@ -101,7 +101,7 @@ class MediumHttpService:
         self.idle_timeout_seconds = idle_timeout_seconds
         self.max_input_bytes = max_input_bytes
         self.session_timeout_seconds = session_timeout_seconds
-        self.decoy_credentials = decoy_credentials or []
+        self.accepted_credentials = accepted_credentials or []
         self.response_delay_seconds = max(response_delay_ms, 0) / 1000.0
         self.exchange_timing = ExchangeTiming(
             self.response_delay_seconds, max(response_jitter_ms, 0) / 1000.0
@@ -334,18 +334,18 @@ class MediumHttpService:
         return "404 Not Found", {}, self._page("Not found", "The requested page was not found.")
 
     def _login_accepted(self, username: str, password: str) -> bool:
-        """Honor configured decoy credentials, else accept any non-empty pair."""
+        """Honor configured credentials, else accept any non-empty pair."""
 
-        decoys = [
+        allowed = [
             credential
-            for credential in self.decoy_credentials
+            for credential in self.accepted_credentials
             if credential.get("service") in (None, "http")
         ]
-        if decoys:
+        if allowed:
             return any(
                 credential.get("username") == username
                 and credential.get("password") == password
-                for credential in decoys
+                for credential in allowed
             )
         return bool(username and password)
 

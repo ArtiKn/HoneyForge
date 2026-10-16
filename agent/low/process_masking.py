@@ -23,15 +23,21 @@ DEFAULT_PROCESS_NAME: Final = "syslog-relay"
 PROCESS_NAME_ENV: Final = "PROCESS_MASK_NAME"
 
 # Substrings that would betray the Agent or its purpose in a process listing.
-FORBIDDEN_MARKERS: Final = (
-    "honey",
-    "honeypot",
-    "honeyforge",
-    "agent",
-    "c2",
-    "c&c",
-    "trap",
-    "decoy",
+# They are assembled from fragments on purpose: this module ships inside the
+# runtime bundle, and a `strings` scan of that artifact must not hand an
+# attacker the very vocabulary this check exists to keep out of `ps` output.
+FORBIDDEN_MARKERS: Final = tuple(
+    "".join(fragments)
+    for fragments in (
+        ("hon", "ey"),
+        ("hone", "ypot"),
+        ("hone", "yforge"),
+        ("ag", "ent"),
+        ("c", "2"),
+        ("c&", "c"),
+        ("tra", "p"),
+        ("deco", "y"),
+    )
 )
 
 # Linux ``TASK_COMM_LEN`` is 16 including the terminating NUL.

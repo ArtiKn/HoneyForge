@@ -145,7 +145,7 @@ def run_demo_attack(host: str = "127.0.0.1", timeout: float = 3.0) -> dict[str, 
     results: dict[str, str] = {}
     with socket.create_connection(targets["ssh_low"], timeout=timeout) as connection:
         results["ssh_low"] = connection.recv(256).decode(errors="replace").strip()
-        connection.sendall(b"HoneyForge demo\n")
+        connection.sendall(b"uname -a\n")
     with socket.create_connection(targets["http_low"], timeout=timeout) as connection:
         connection.sendall(b"GET /demo HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
         results["http_low"] = connection.recv(512).decode(errors="replace").splitlines()[0]
@@ -244,7 +244,7 @@ def smoke_operator_surface(
         "source_port": 49153,
         "target_service": "ssh",
         "target_port": 22,
-        "payload": {"banner": "SSH-2.0-HoneyForge-live-smoke"},
+        "payload": {"banner": "SSH-2.0-OpenSSH_8.9p1"},
     }
     request = Request(
         f"{base_url}/assets/v2/init",

@@ -10,7 +10,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from uuid import UUID
 
-from honeyforge_low import (
+from agent.low.beacon import BeaconSchedule, BeaconSettings
+from agent.low.honeyforge_low import (
     AgentClient,
     EventQueue,
     JsonLogFormatter,
@@ -20,9 +21,8 @@ from honeyforge_low import (
     LowSshAgent,
     LowUdpAgent,
 )
-from agent.low.beacon import BeaconSchedule, BeaconSettings
-from process_masking import apply_process_masking, resolve_process_name
-from profile_runtime import ProfileRuntime, TrapService, report_runtime_health
+from agent.low.process_masking import apply_process_masking, resolve_process_name
+from agent.low.profile_runtime import ProfileRuntime, TrapService, report_runtime_health
 
 log_handler = logging.StreamHandler()
 log_handler.setFormatter(JsonLogFormatter())

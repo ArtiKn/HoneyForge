@@ -43,7 +43,7 @@ def probe_deployment(
         "source_port": 49152,
         "target_service": "ssh",
         "target_port": 22,
-        "payload": {"banner": "SSH-2.0-HoneyForge-deployment-probe"},
+        "payload": {"banner": "SSH-2.0-OpenSSH_8.9p1"},
     }
     request = Request(
         f"{base_url}/assets/v2/init",
@@ -64,7 +64,7 @@ def probe_deployment(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Verify HoneyForge readiness and Security Event delivery"
+        description="Verify Control Center readiness and Security Event delivery"
     )
     parser.add_argument("--center-url", required=True)
     parser.add_argument("--ca-file", type=Path)

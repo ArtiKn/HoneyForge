@@ -21,7 +21,10 @@ async def test_medium_ssh_accepts_credentials_and_runs_bounded_fake_shell(tmp_pa
             known_hosts=None,
         ) as connection:
             process = await connection.create_process()
-            assert "Welcome" in await process.stdout.readuntil("$ ")
+            greeting = await process.stdout.readuntil("$ ")
+            assert "Welcome" in greeting
+            # The greeting is attacker-visible and must stay neutral (MASK-6).
+            assert "HoneyForge" not in greeting
             process.stdin.write("pwd\n")
             assert "/home/root" in await process.stdout.readuntil("$ ")
             marker = tmp_path / "honeyforge-should-not-exist"
@@ -63,7 +66,7 @@ async def test_medium_ssh_honours_decoy_credentials(tmp_path: Path) -> None:
         host="127.0.0.1",
         port=0,
         queue=queue,
-        decoy_credentials=[
+        accepted_credentials=[
             {"username": "root", "password": "s3cret", "service": "ssh"}
         ],
     )
@@ -86,7 +89,10 @@ async def test_medium_ssh_honours_decoy_credentials(tmp_path: Path) -> None:
             known_hosts=None,
         ) as connection:
             process = await connection.create_process()
-            assert "Welcome" in await process.stdout.readuntil("$ ")
+            greeting = await process.stdout.readuntil("$ ")
+            assert "Welcome" in greeting
+            # The greeting is attacker-visible and must stay neutral (MASK-6).
+            assert "HoneyForge" not in greeting
             process.stdin.write("exit\n")
             assert "logout" in await process.stdout.read()
         await _wait_for_events(queue, 4)
@@ -163,7 +169,10 @@ async def test_medium_ssh_applies_response_delay(tmp_path: Path) -> None:
         ) as connection:
             started = loop.time()
             process = await connection.create_process()
-            assert "Welcome" in await process.stdout.readuntil("$ ")
+            greeting = await process.stdout.readuntil("$ ")
+            assert "Welcome" in greeting
+            # The greeting is attacker-visible and must stay neutral (MASK-6).
+            assert "HoneyForge" not in greeting
             elapsed = loop.time() - started
     finally:
         await service.stop()

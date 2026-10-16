@@ -45,7 +45,7 @@ def test_http_authentication_uses_full_credentials_not_truncated_log_values(tmp_
     queue = EventQueue(tmp_path / 'http.sqlite3')
     service = MediumHttpService(
         trap_id=uuid4(), host='127.0.0.1', port=8080, queue=queue,
-        decoy_credentials=[{'username': 'u' * 256, 'password': 'p' * 1024}],
+        accepted_credentials=[{'username': 'u' * 256, 'password': 'p' * 1024}],
         max_payload_bytes=1,
     )
     service._route('POST', '/login', {},

@@ -58,5 +58,11 @@ Collector нормализует батч, дополняет geoip, пишет 
 | Размер запросов beacon'а | Случайный батч 40–100% от лимита, чтобы соседние запросы отличались по весу |
 | User-Agent агента | `masking.user_agent` из профиля (иначе — дефолтный клиент urllib) |
 | Процесс Agent | Маскируется: `prctl(PR_SET_NAME)` + перезапись argv дают нейтральное имя (`syslog-relay`, настраивается через `PROCESS_MASK_NAME`) |
-| Баннеры сервисов | Реалистичные строки (OpenSSH_8.9, nginx/1.24.0, MySQL 8.0) |
+| Содержимое артефакта (`relay.pyz`) | `agent/build_bundle.py` переименовывает модули (`listeners.py`, `runtimekit.py`, `relay_common/*`), переменные окружения (`TRAP_SECRET_FILE`→`SERVICE_KEY_FILE`) и **вырезает все комментарии и докстринги**, поэтому `strings`/`grep` по файлу на Trap-хосте не находят ни слова про honeypot, ни объяснений, что код скрывает |
+| Баннеры сервисов | Реалистичные строки (OpenSSH_8.9, nginx/1.24.0, MySQL 8.0); тело Low-HTTP собирается из баннера, приветствие fake-shell — нейтральная строка Ubuntu |
 | Ответы fake-shell | Задержки как у настоящего bash: `response_delay_ms` + случайный разброс `response_jitter_ms` |
+
+Граница маскировки: в артефакле остаются слова `trap_id`, `agent_version` и
+`decoy_credentials` — это ключи контракта Control Center↔Agent, их переименование
+сломало бы конфигурацию, выдаваемую центром. Проверка «в артефакте нет слов
+про honeypot» зафиксирована в `tests/test_bundle_masking.py`.

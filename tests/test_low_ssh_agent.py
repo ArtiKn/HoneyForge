@@ -91,7 +91,11 @@ async def test_http_service_returns_static_response_and_normalizes_request(
         await agent.stop()
 
     assert response.startswith(b"HTTP/1.1 200 OK\r\n")
-    assert b"HoneyForge" in response
+    # The body has to match the advertised Server header and must not name the
+    # platform that runs the port (MASK-6).
+    assert b"Server: nginx/1.24.0" in response
+    assert b"Welcome to nginx!" in response
+    assert b"HoneyForge" not in response
     events = queue.pending(limit=10)
     assert [event["event_type"] for event in events] == [
         "connection_opened",
@@ -160,7 +164,8 @@ async def test_mysql_service_returns_handshake_and_enforces_input_limit(
         await agent.stop()
 
     assert payload[0] == 10
-    assert b"8.0.36-HoneyForge" in payload
+    assert b"8.0.36" in payload
+    assert b"HoneyForge" not in payload
     assert b"mysql_native_password\x00" in payload
     events = queue.pending(limit=10)
     assert [event["event_type"] for event in events] == [

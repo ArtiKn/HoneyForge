@@ -71,11 +71,11 @@ class FakeDatabase:
 class MediumMySqlService(_LowTcpService):
     protocol = "mysql"
 
-    def __init__(self, *, banner: str | None = None, decoy_credentials: list[dict] | None = None,
+    def __init__(self, *, banner: str | None = None, accepted_credentials: list[dict] | None = None,
                  capture_commands: bool = True, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.mysql_banner = banner or "8.0.36"
-        self.decoy_credentials = decoy_credentials or []
+        self.accepted_credentials = accepted_credentials or []
         self.capture_commands = capture_commands
 
     def banner(self) -> str:
@@ -97,7 +97,7 @@ class MediumMySqlService(_LowTcpService):
         return bytes(a ^ b for a, b in zip(stage1, scramble))
 
     def accepted(self, username: str, response: bytes, nonce: bytes) -> bool:
-        credentials = [c for c in self.decoy_credentials if c.get("service") in (None, "mysql")]
+        credentials = [c for c in self.accepted_credentials if c.get("service") in (None, "mysql")]
         return not credentials or any(
             c["username"] == username and hmac.compare_digest(response, self.native_response(c["password"], nonce))
             for c in credentials

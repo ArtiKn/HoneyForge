@@ -155,7 +155,7 @@ async def test_udp_capture_lifecycle_and_no_amplification(tmp_path):
 async def test_mysql_native_auth_queries_and_no_host_execution(tmp_path, capture):
     queue = EventQueue(tmp_path / 'mysql.sqlite3')
     service = MediumMySqlService(trap_id=uuid4(), host='127.0.0.1', port=0, queue=queue,
-        decoy_credentials=[{'username': 'admin', 'password': 'secret', 'service': 'mysql'}],
+        accepted_credentials=[{'username': 'admin', 'password': 'secret', 'service': 'mysql'}],
         capture_credentials=capture, capture_commands=capture)
     await service.start()
     try:
